@@ -1,25 +1,24 @@
-# 数据获取与处理
+# Data fetching & processing
 pandas>=2.0.0
 numpy>=1.24.0
 
-# 行情数据
+# Market data sources
 akshare>=1.10.0
 tushare>=1.2.89
 
-# 回测框架
+# Backtest framework
 backtrader>=1.9.78
 
-# 可视化
+# Visualization
 matplotlib>=3.7.0
 mplfinance>=0.12.9b0
 
-# 指标计算
+# Technical indicators
 ta>=0.11.0
-pandas-ta>=0.3.14b0
 
-# 工具
+# Utilities
 python-dotenv>=1.0.0
 loguru>=0.7.0
 
-# 交互环境 (可选)
+# Interactive environment (optional)
 jupyter>=1.0.0

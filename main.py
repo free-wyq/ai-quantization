@@ -1,5 +1,5 @@
 """AI 量化交易系统 - 主入口"""
-
+from strategy.turtle import TurtleStrategy
 from utils.logger import log
 from data.fetcher import fetch_stock_history
 from strategy.ma_cross import MACrossStrategy
@@ -16,7 +16,7 @@ def main():
     df = fetch_stock_history(symbol, "20240101", "20241231")
 
     # 2. 运行策略
-    strategy = MACrossStrategy(short_period=5, long_period=20)
+    strategy = TurtleStrategy()
     log.info(f"使用策略: {strategy.name}")
     df = strategy.generate_signals(df)
 

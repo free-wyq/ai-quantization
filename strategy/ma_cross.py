@@ -34,6 +34,10 @@ class MACrossStrategy(BaseStrategy):
 
 
 if __name__ == "__main__":
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
     from data.fetcher import fetch_stock_history
 
     strategy = MACrossStrategy(short_period=5, long_period=20)
