@@ -118,6 +118,7 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False):
                                 barup="red", barupfill=True,        # 上涨K线: 红色实心
                                 bardown="green", bardownfill=True,  # 下跌K线: 绿色实心
                                 volup="red", voldown="green",       # 成交量柱: 涨红跌绿
+                                voloverlay=False,                   # 成交量单独成图, 不与K线重叠
                                 plotdist=0.02,
                                 savefig=False)
             # 后处理: 买卖点/盈亏点统一成 红=涨/赚, 绿=跌/亏
@@ -134,6 +135,18 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False):
                             for key, col in obs_color.items():
                                 if label.endswith(key):
                                     line.set_color(col)
+                            if label.endswith("buy"):
+                                line.set_marker("^")
+                                line.set_markersize(14)
+                                line.set_markeredgecolor("darkred")
+                                line.set_markeredgewidth(1.5)
+                                line.set_zorder(10)
+                            elif label.endswith("sell"):
+                                line.set_marker("v")
+                                line.set_markersize(14)
+                                line.set_markeredgecolor("darkgreen")
+                                line.set_markeredgewidth(1.5)
+                                line.set_zorder(10)
                     fig.savefig(out_path, dpi=150)
             print(f"  收益曲线已保存: framework/result.png")
         except Exception as e:
