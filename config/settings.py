@@ -18,14 +18,6 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # Tushare token (在 .env 文件中配置: TUSHARE_TOKEN=your_token)
 TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")
 
-# ===== 回测配置 =====
-BACKTEST_CONFIG = {
-    "initial_capital": 100000.0,   # 初始资金 10万
-    "commission": 0.0003,           # 手续费率 万三
-    "slippage": 0.001,             # 滑点
-    "stamp_duty": 0.001,          # 印花税 千一 (卖出时收取)
-}
-
 # ===== 日志配置 =====
 LOG_CONFIG = {
     "level": "DEBUG",
