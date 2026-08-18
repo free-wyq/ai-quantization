@@ -15,9 +15,11 @@ ai-Quantification/
 │   └── ma_cross.py     # 双均线交叉策略
 ├── backtest/           # 回测模块
 │   └── engine.py       # 简易回测引擎
+├── framework/          # 专业回测框架 (backtrader)
+│   ├── strategies.py   # backtrader 版策略 (MA/MACD/海龟)
+│   └── run.py          # 专业回测运行入口
 ├── utils/              # 工具模块
 │   └── logger.py       # 日志配置
-├── main.py             # 主入口
 ├── requirements.txt    # 项目依赖
 ├── .env.example        # 环境变量示例
 └── README.md
@@ -36,11 +38,21 @@ pip install -r requirements.txt
 
 ### 2. 运行示例
 
+使用专业回测框架 `framework/run.py`（基于 backtrader，输出收益率/夏普比率/最大回撤/胜率/盈亏比）：
+
 ```bash
-python main.py
+# 默认: 海龟策略 + 平安银行(000001)
+python framework/run.py
+
+# 指定策略与股票
+python framework/run.py ma 600519
+python framework/run.py macd 000001
+
+# 生成收益曲线图
+python framework/run.py turtle 000001 --plot
 ```
 
-程序会自动获取平安银行(000001) 2024 年的日线数据，使用 5/20 双均线策略回测，输出收益情况。
+程序会自动获取对应股票 2024 年的日线数据并回测，首次联网下载后缓存到 `data/`，之后离线可用。
 
 ### 3. 自定义策略
 

@@ -29,14 +29,14 @@ STRATS = {
 
 def run(strategy_key: str, symbol: str, do_plot: bool = False):
     # 1. 准备数据 (复用现有 fetcher, 带本地缓存)
-    df = fetch_stock_history(symbol, "20240101", "20241231").copy()
+    df = fetch_stock_history(symbol, "20260526", "20260818").copy()
     if "openinterest" not in df.columns:
         df["openinterest"] = 0.0
     df = df[["open", "high", "low", "close", "volume", "openinterest"]]
     data_feed = bt.feeds.PandasData(dataname=df)
 
-    # 2. 构建 cerebro
-    cerebro = bt.Cerebro()
+    # 2. 构建 cerebro (stdstats=False: 关闭默认observer自动添加, 改用下面自定义配色版)
+    cerebro = bt.Cerebro(stdstats=False)
     cerebro.adddata(data_feed)
     cerebro.addstrategy(STRATS[strategy_key])
 
@@ -55,6 +55,13 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False):
     cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
     cerebro.addanalyzer(bt.analyzers.Returns, _name="returns")
 
+    # 统一配色: 红=涨/赚, 绿=跌/亏 (A股习惯)
+    # Broker 默认会在 stdstats 里自动加, 关掉后需手动加回(资产曲线)
+    # 买卖点/盈亏点的颜色在下方 plot 后用 matplotlib 后处理统一
+    cerebro.addobserver(bt.observers.Broker)
+    cerebro.addobserver(bt.observers.BuySell)
+    cerebro.addobserver(bt.observers.Trades)
+
     # 4. 运行
     init_cash = cerebro.broker.getcash()
     results = cerebro.run()
@@ -68,12 +75,15 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False):
     total_return = rets.get("rtot")
 
     ta = strat.analyzers.trades.get_analysis()
-    closed = ta.total.closed
-    won = ta.won.total
-    lost = ta.lost.total
+    total = ta.get("total", {}) or {}
+    won_d = ta.get("won", {}) or {}
+    lost_d = ta.get("lost", {}) or {}
+    closed = total.get("closed", 0)
+    won = won_d.get("total", 0)
+    lost = lost_d.get("total", 0)
     win_rate = (won / closed * 100) if closed else 0.0
-    avg_win = ta.won.pnl.average if won else 0.0
-    avg_loss = ta.lost.pnl.average if lost else 0.0
+    avg_win = won_d.get("pnl", {}).get("average", 0.0) if won else 0.0
+    avg_loss = lost_d.get("pnl", {}).get("average", 0.0) if lost else 0.0
     profit_factor = (abs(avg_win / avg_loss) if avg_loss else float("inf"))
 
     # 基准 (买入持有)
@@ -103,8 +113,28 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False):
     # 7. 可选绘图
     if do_plot:
         try:
-            fig = cerebro.plot(style="candlestick", savefig=True,
-                               filename=os.path.join(os.path.dirname(__file__), "result.png"))
+            # 先拿图对象(不自动保存), 再统一后处理配色
+            figs = cerebro.plot(style="candlestick",
+                                barup="red", barupfill=True,        # 上涨K线: 红色实心
+                                bardown="green", bardownfill=True,  # 下跌K线: 绿色实心
+                                volup="red", voldown="green",       # 成交量柱: 涨红跌绿
+                                plotdist=0.02,
+                                savefig=False)
+            # 后处理: 买卖点/盈亏点统一成 红=涨/赚, 绿=跌/亏
+            obs_color = {"buy": "red", "sell": "green",
+                         "pnlplus": "red", "pnlminus": "green"}
+            out_path = os.path.join(os.path.dirname(__file__), "result.png")
+            for fig_group in figs:
+                # backtrader 返回两层列表 [ [fig1, ...] ], 需展平
+                fig_list = fig_group if isinstance(fig_group, (list, tuple)) else [fig_group]
+                for fig in fig_list:
+                    for ax in fig.axes:
+                        for line in ax.get_lines():
+                            label = line.get_label()
+                            for key, col in obs_color.items():
+                                if label.endswith(key):
+                                    line.set_color(col)
+                    fig.savefig(out_path, dpi=150)
             print(f"  收益曲线已保存: framework/result.png")
         except Exception as e:
             print(f"  绘图失败 (可忽略): {e}")
@@ -115,6 +145,6 @@ if __name__ == "__main__":
     parser.add_argument("strategy", nargs="?", default="turtle",
                         choices=list(STRATS.keys()))
     parser.add_argument("symbol", nargs="?", default="000001")
-    parser.add_argument("--plot", action="store_true", help="生成收益曲线图")
+    parser.add_argument("--plot", action="store_true", help="生成收益曲线图", default=type)
     args = parser.parse_args()
     run(args.strategy, args.symbol, args.plot)
