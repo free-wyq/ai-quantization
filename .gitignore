@@ -39,3 +39,6 @@ logs/
 # 临时文件
 temp_*.json
 *.tmp
+
+# 回测运行结果
+framework/results/runs/

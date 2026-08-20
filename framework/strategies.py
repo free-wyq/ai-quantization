@@ -23,10 +23,10 @@ def ma_strategy(df, fast=5, slow=20):
 def macd_strategy(df, fast=12, slow=26, signal=9):
     """MACD 金叉死叉 (DIF 上穿 DEA 买入, 下穿平仓)"""
     close = df["close"]
-    ema_fast = close.ewm(span=(fast,), adjust=False).mean()
-    ema_slow = close.ewm(span=(slow,), adjust=False).mean()
+    ema_fast = close.ewm(span=fast, adjust=False).mean()
+    ema_slow = close.ewm(span=slow, adjust=False).mean()
     dif = ema_fast - ema_slow
-    dea = dif.ewm(span=(signal,), adjust=False).mean()
+    dea = dif.ewm(span=signal, adjust=False).mean()
     entries = (dif > dea) & (dif.shift(1) <= dea.shift(1))
     exits = (dif < dea) & (dif.shift(1) >= dea.shift(1))
     return entries.fillna(False), exits.fillna(False)

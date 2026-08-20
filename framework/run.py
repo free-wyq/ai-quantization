@@ -81,11 +81,17 @@ def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics):
 
     _build_dashboard()
     print(f"  结果已存档: framework/results/runs/{filename}")
-    print(f"  看板页面:   {DASHBOARD_PATH}  (浏览器打开, 下拉切换历史)")
+    print(f"  看板服务:   framework/ 目录下执行  python serve_dashboard.py")
+    print(f"  浏览器打开: http://localhost:8000/framework/results/dashboard.html")
+    print(f"  (每次刷新页面都会自动加载最新回测记录)")
 
 
 def _build_dashboard():
-    """汇总 runs/ 目录下所有 JSON, 生成自包含看板 (klinecharts 离线, 无需服务器)。"""
+    """汇总 runs/ 目录下所有 JSON, 生成自包含看板 (klinecharts 离线, 无需服务器)。
+
+    数据通过 runs/index.js 引入 (file:// 双击打开也能读目录内容),
+    看板页面不再内嵌大段数据。
+    """
     runs = []
     if os.path.isdir(RUNS_DIR):
         for fn in os.listdir(RUNS_DIR):
@@ -97,10 +103,11 @@ def _build_dashboard():
                     pass
     # 按 id(时间) 倒序, 最新的排最前, 并限制数量
     runs.sort(key=lambda r: r.get("id", ""), reverse=True)
-    runs = runs[:MAX_RUNS]
-    runs_json = json.dumps(runs, ensure_ascii=False)
-    html = DASHBOARD_TEMPLATE.replace("/*__RUNS__*/", runs_json)
-    open(DASHBOARD_PATH, "w", encoding="utf-8").write(html)
+    # 本地服务模式: 页面通过 fetch('runs/') 遍历目录、选中后懒加载对应 JSON,
+    # 因此这里不再写 index.js, 数据完全由 runs/ 下的文件决定。
+    # dashboard.html 视为固定模板: 仅当不存在时生成一次, 之后绝不覆盖。
+    if not os.path.exists(DASHBOARD_PATH):
+        open(DASHBOARD_PATH, "w", encoding="utf-8").write(DASHBOARD_TEMPLATE)
 
 
 # 看板 HTML 模板
@@ -128,29 +135,29 @@ DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   .pos { color:#ff4d4f; } .neg { color:#00c853; }
   #equity { width:100%; height:160px; background:#171a21; border-radius:8px; margin-top:6px; }
   .hint { color:#8b93a1; font-size:12px; margin-left:auto; }
+  .err { color:#ff7875; padding:20px; }
 </style>
 </head>
 <body>
 <header>
   <h1>量化回测看板</h1>
-  <select id="sel"></select>
-  <span class="hint">klinecharts 离线版 · 下拉切换历史</span>
+  <select id="sel"><option>加载中...</option></select>
+  <span class="hint">本地服务模式 · 遍历 runs/ 目录 · 选中后懒加载</span>
 </header>
 <div class="wrap">
   <div id="chart"></div>
   <div class="panel" id="metrics"></div>
   <canvas id="equity"></canvas>
+  <div id="err" class="err"></div>
 </div>
 
 <script>
-const RUNS = /*__RUNS__*/;
-const sel = document.getElementById('sel');
-RUNS.forEach((r, i) => {
-  const o = document.createElement('option');
-  o.value = i; o.textContent = r.label; sel.appendChild(o);
-});
-
+let FILES = [];           // 文件名列表 (来自 fetch runs/ 目录)
 let chart = null;
+
+const sel = document.getElementById('sel');
+const errBox = document.getElementById('err');
+
 function fmt(n, d=2){ return Number(n).toLocaleString('zh-CN',{minimumFractionDigits:d,maximumFractionDigits:d}); }
 function cls(v){ return v>=0 ? 'pos' : 'neg'; }
 function sign(v){ return v>=0 ? '+' : ''; }
@@ -162,7 +169,7 @@ function drawEquity(equity){
   cv.width = w*dpr; cv.height = h*dpr;
   const ctx = cv.getContext('2d'); ctx.scale(dpr,dpr);
   ctx.clearRect(0,0,w,h);
-  if(!equity.length) return;
+  if(!equity || !equity.length) return;
   const vals = equity.map(e=>e.value);
   const min = Math.min(...vals), max = Math.max(...vals);
   const x = i => w * i/(vals.length-1 || 1);
@@ -174,14 +181,11 @@ function drawEquity(equity){
   ctx.fillText('账户权益  '+fmt(vals[vals.length-1]), 8, 16);
 }
 
-function render(idx){
-  const r = RUNS[idx];
-  // K线
+function render(data){
   if(chart) chart.remove();
   chart = klinecharts.init({ container: document.getElementById('chart') });
-  chart.applyNewData(r.candles);
-  // 买卖点 (内置 circle + text 画线模型)
-  r.buys.forEach(p=>{
+  chart.applyNewData(data.candles);
+  data.buys.forEach(p=>{
     try { chart.createOverlay({ name:'circle', lock:true,
       points:[{timestamp:p.timestamp, price:p.price}],
       styles:{ circle:{ radius:9, color:'rgba(255,77,79,0.22)', border:{color:'#ff4d4f', size:2} } } }); } catch(e){}
@@ -189,7 +193,7 @@ function render(idx){
       points:[{timestamp:p.timestamp, price:p.price}],
       styles:{ text:{ text:'B', color:'#fff', fontSize:12, fontWeight:'bold' } } }); } catch(e){}
   });
-  r.sells.forEach(p=>{
+  data.sells.forEach(p=>{
     try { chart.createOverlay({ name:'circle', lock:true,
       points:[{timestamp:p.timestamp, price:p.price}],
       styles:{ circle:{ radius:9, color:'rgba(0,200,83,0.22)', border:{color:'#00c853', size:2} } } }); } catch(e){}
@@ -197,8 +201,7 @@ function render(idx){
       points:[{timestamp:p.timestamp, price:p.price}],
       styles:{ text:{ text:'S', color:'#fff', fontSize:12, fontWeight:'bold' } } }); } catch(e){}
   });
-  // 指标卡片
-  const m = r.metrics;
+  const m = data.metrics || {};
   const cards = [
     ['策略收益率', sign(m.total_return)+fmt(m.total_return)+'%', cls(m.total_return)],
     ['基准收益率', fmt(m.benchmark)+'%', cls(m.benchmark)],
@@ -211,11 +214,48 @@ function render(idx){
   ];
   document.getElementById('metrics').innerHTML = cards.map(c=>
     `<div class="card"><div class="k">${c[0]}</div><div class="v ${c[2]}">${c[1]}</div></div>`).join('');
-  drawEquity(r.equity);
+  drawEquity(data.equity);
 }
 
-sel.addEventListener('change', e => render(+e.target.value));
-render(0);
+// 选中某条历史 -> 懒加载对应 JSON
+async function loadAndRender(idx){
+  const name = FILES[idx];
+  if(!name) return;
+  try {
+    const res = await fetch('runs/' + name);
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    render(await res.json());
+  } catch(e){
+    errBox.textContent = '加载失败: ' + name + ' (' + e.message + ')';
+  }
+}
+
+sel.addEventListener('change', e => loadAndRender(+e.target.value));
+
+// 启动: 遍历 runs/ 目录, 列出所有 .json (排除 index.js)
+async function init(){
+  try {
+    const res = await fetch('runs/');
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const html = await res.text();
+    // 从目录列表页里提取 .json 文件名 (python http.server 的 <a href>)
+    const names = [...html.matchAll(/href="([^"]+\.json)"/g)].map(m=>m[1])
+                    .filter(n => n !== 'index.js');
+    FILES = names;
+    sel.innerHTML = '';
+    names.forEach((n, i) => {
+      const o = document.createElement('option');
+      o.value = i; o.textContent = n.replace('.json',''); sel.appendChild(o);
+    });
+    if(names.length) loadAndRender(0);
+    else errBox.textContent = 'runs/ 目录下没有 .json 文件';
+  } catch(e){
+    errBox.innerHTML = '无法遍历 runs/ 目录 (' + e.message + ')。<br>' +
+      '请通过本地服务打开, 例如: <code>python -m http.server</code> 然后访问 ' +
+      '<code>http://localhost:8000/framework/results/dashboard.html</code>';
+  }
+}
+init();
 </script>
 </body>
 </html>
