@@ -14,16 +14,16 @@
   header h1 { font-size:16px; margin:0; color:#ffd666; }
   select { background:#22262f; color:#e6e6e6; border:1px solid #333; border-radius:6px;
            padding:6px 10px; font-size:14px; min-width:300px; }
-  .wrap { padding:16px; }
+  .wrap { padding:0; }
   #chart { width:100%; height:680px; background:#171a21; border-radius:8px; }
-  .panel { display:flex; flex-wrap:wrap; gap:10px; margin:14px 0; }
+  .panel { display:flex; flex-wrap:wrap; gap:10px; margin:14px 16px; }
   .card { background:#171a21; border:1px solid #262b35; border-radius:8px; padding:10px 14px; min-width:130px; }
   .card .k { font-size:12px; color:#8b93a1; }
   .card .v { font-size:18px; font-weight:600; margin-top:2px; }
   .pos { color:#ff4d4f; } .neg { color:#00c853; }
   .hint { color:#8b93a1; font-size:12px; margin-left:auto; }
-  .section-title { font-size:14px; color:#ffd666; margin:16px 0 8px; }
-  table { width:100%; border-collapse:collapse; background:#171a21; border-radius:8px; overflow:hidden; }
+  .section-title { font-size:14px; color:#ffd666; margin:16px 16px 8px; }
+  table { width:calc(100% - 32px); margin:0 16px; border-collapse:collapse; background:#171a21; border-radius:8px; overflow:hidden; }
   th, td { padding:8px 12px; text-align:right; font-size:13px; border-bottom:1px solid #262b35; }
   th { color:#8b93a1; font-weight:500; background:#1c2029; }
   td:first-child, th:first-child { text-align:center; }
@@ -76,6 +76,16 @@ klinecharts.registerIndicator({
 });
 
 const chart = klinecharts.init('chart');
+chart.setStyles({
+  grid: {
+    horizontal: { color: 'transparent' },
+    vertical: { color: 'transparent' }
+  },
+  crosshair: {
+    horizontal: { text: { backgroundColor: '#1f77b4' } },
+    vertical: { text: { backgroundColor: '#1f77b4' } }
+  }
+});
 
 function render(idx){
   const r = RUNS[idx];
@@ -84,6 +94,7 @@ function render(idx){
   // 清除旧覆盖物和旧指标
   chart.removeOverlay();
   chart.removeIndicator({ name: 'EQUITY' });
+  chart.removeIndicator({ name: 'VOL' });
 
   // 构建权益曲线 timestamp→value 映射
   equityMap = {};
@@ -100,7 +111,8 @@ function render(idx){
     }
   });
 
-  // 在独立 pane 中创建权益曲线指标 (与 K 线同步滚动缩放)
+  // 在独立 pane 中创建成交量和权益曲线指标 (与 K 线同步滚动缩放)
+  chart.createIndicator({ name: 'VOL', paneId: 'vol_pane' });
   chart.createIndicator({ name: 'EQUITY', paneId: 'equity_pane' });
 
   // 买卖点 (simpleAnnotation: 虚线+箭头+文字)

@@ -300,17 +300,17 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False):
     max_dd = abs(float(pf.max_drawdown(freq="d"))) * 100
 
     n_trades = int(pf.trades.count())
+    # 从 records_readable 提取 PnL 数组手动计算 (pf.trades.won/lost 在此版本不可用)
     try:
-        win_rate = float(pf.trades.win_rate()) * 100 if n_trades else 0.0
-        won_pnl = pf.trades.won.pnl
-        lost_pnl = pf.trades.lost.pnl
-        avg_win = float(won_pnl.mean()) if len(won_pnl) else 0.0
-        avg_loss = float(lost_pnl.mean()) if len(lost_pnl) else 0.0
-        sum_win = float(won_pnl.sum())
-        sum_loss = float(lost_pnl.sum())
-        profit_factor = (abs(sum_win / sum_loss) if sum_loss != 0 else float("inf"))
+        pnls = pf.trades.records_readable["PnL"].values
+        wins = pnls[pnls > 0]
+        losses = pnls[pnls < 0]
+        win_rate = (len(wins) / n_trades * 100) if n_trades else 0.0
+        sum_win = float(wins.sum()) if len(wins) else 0.0
+        sum_loss = float(abs(losses.sum())) if len(losses) else 0.0
+        profit_factor = (sum_win / sum_loss) if sum_loss != 0 else float("inf")
     except Exception:
-        win_rate = avg_win = avg_loss = 0.0
+        win_rate = 0.0
         profit_factor = float("inf")
 
     metrics = {
@@ -339,8 +339,6 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False):
     print("-" * 56)
     print(f"  交易次数:      {n_trades:>14}")
     print(f"  胜率:          {win_rate:>13.2f}%")
-    print(f"  平均盈利:      {avg_win:>14.2f}")
-    print(f"  平均亏损:      {avg_loss:>14.2f}")
     print(f"  盈亏比:        {profit_factor:>14.2f}" if profit_factor != float("inf") else "  盈亏比:             ∞")
     print("=" * 56)
 
