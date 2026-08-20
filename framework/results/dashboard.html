@@ -23,6 +23,13 @@
   .pos { color:#ff4d4f; } .neg { color:#00c853; }
   #equity { width:100%; height:160px; background:#171a21; border-radius:8px; margin-top:6px; }
   .hint { color:#8b93a1; font-size:12px; margin-left:auto; }
+  .section-title { font-size:14px; color:#ffd666; margin:16px 0 8px; }
+  table { width:100%; border-collapse:collapse; background:#171a21; border-radius:8px; overflow:hidden; }
+  th, td { padding:8px 12px; text-align:right; font-size:13px; border-bottom:1px solid #262b35; }
+  th { color:#8b93a1; font-weight:500; background:#1c2029; }
+  td:first-child, th:first-child { text-align:center; }
+  td.pnl-pos { color:#ff4d4f; } td.pnl-neg { color:#00c853; }
+  .tag-buy { color:#ff4d4f; font-weight:600; } .tag-sell { color:#00c853; font-weight:600; }
 </style>
 </head>
 <body>
@@ -35,6 +42,11 @@
   <div id="chart"></div>
   <div class="panel" id="metrics"></div>
   <canvas id="equity"></canvas>
+  <div class="section-title">交易明细</div>
+  <table id="trades">
+    <thead><tr><th>类型</th><th>日期</th><th>价格</th><th>盈亏</th></tr></thead>
+    <tbody></tbody>
+  </table>
 </div>
 
 <script>
@@ -125,6 +137,26 @@ function render(idx){
   document.getElementById('metrics').innerHTML = cards.map(c=>
     `<div class="card"><div class="k">${c[0]}</div><div class="v ${c[2]}">${c[1]}</div></div>`).join('');
   drawEquity(r.equity);
+
+  // 交易明细表: 从 vectorbt 实际成交记录构建 (sells 中已含 pnl 和 return)
+  const trades = [];
+  r.buys.forEach((b, i) => {
+    const s = r.sells[i];
+    trades.push({type:'买入', date:b.timestamp, price:b.price, pnl:null});
+    if (s) trades.push({type:'卖出', date:s.timestamp, price:s.price, pnl:s.return});
+  });
+
+  const fmtDate = ts => {
+    const d = new Date(ts);
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  };
+  const tbody = document.querySelector('#trades tbody');
+  tbody.innerHTML = trades.map(t=>{
+    const cls = t.type==='买入' ? 'tag-buy' : 'tag-sell';
+    const pnlStr = t.pnl===null ? '—' : (t.pnl>=0?'+':'')+fmt(t.pnl)+'%';
+    const pnlCls = t.pnl===null ? '' : (t.pnl>=0?'pnl-pos':'pnl-neg');
+    return `<tr><td class="${cls}">${t.type}</td><td>${fmtDate(t.date)}</td><td>${fmt(t.price)}</td><td class="${pnlCls}">${pnlStr}</td></tr>`;
+  }).join('');
 }
 
 sel.addEventListener('change', e => render(+e.target.value));

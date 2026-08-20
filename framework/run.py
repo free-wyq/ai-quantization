@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
 import vectorbt as vbt
+import pandas as pd
 
 from data.fetcher import fetch_stock_history
 from framework.strategies import STRATS
@@ -47,13 +48,22 @@ def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics):
             "volume": float(df["volume"].iloc[i]),
         })
 
+    # 从 vectorbt 实际成交记录提取买卖点 (而非原始信号, 避免无持仓时的虚假卖出)
     buys, sells = [], []
-    for i in range(len(df)):
-        t = candles[i]["timestamp"]
-        if bool(entries.iloc[i]):
-            buys.append({"timestamp": t, "price": candles[i]["close"]})
-        if bool(exits.iloc[i]):
-            sells.append({"timestamp": t, "price": candles[i]["close"]})
+    try:
+        trades_df = pf.trades.records_readable
+        for _, row in trades_df.iterrows():
+            entry_ts = int(pd.Timestamp(row["Entry Timestamp"]).timestamp() * 1000)
+            exit_ts = int(pd.Timestamp(row["Exit Timestamp"]).timestamp() * 1000)
+            entry_price = round(float(row["Avg Entry Price"]), 2)
+            exit_price = round(float(row["Avg Exit Price"]), 2)
+            pnl = round(float(row["PnL"]), 2)
+            ret = round(float(row["Return"]) * 100, 2)
+            buys.append({"timestamp": entry_ts, "price": entry_price})
+            sells.append({"timestamp": exit_ts, "price": exit_price,
+                          "pnl": pnl, "return": ret})
+    except Exception as e:
+        print(f"  [警告] 提取成交记录失败: {e}")
 
     value = pf.value()
     equity = [{
