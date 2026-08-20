@@ -15,13 +15,12 @@
   select { background:#22262f; color:#e6e6e6; border:1px solid #333; border-radius:6px;
            padding:6px 10px; font-size:14px; min-width:300px; }
   .wrap { padding:16px; }
-  #chart { width:100%; height:520px; background:#171a21; border-radius:8px; }
+  #chart { width:100%; height:680px; background:#171a21; border-radius:8px; }
   .panel { display:flex; flex-wrap:wrap; gap:10px; margin:14px 0; }
   .card { background:#171a21; border:1px solid #262b35; border-radius:8px; padding:10px 14px; min-width:130px; }
   .card .k { font-size:12px; color:#8b93a1; }
   .card .v { font-size:18px; font-weight:600; margin-top:2px; }
   .pos { color:#ff4d4f; } .neg { color:#00c853; }
-  #equity { width:100%; height:160px; background:#171a21; border-radius:8px; margin-top:6px; }
   .hint { color:#8b93a1; font-size:12px; margin-left:auto; }
   .section-title { font-size:14px; color:#ffd666; margin:16px 0 8px; }
   table { width:100%; border-collapse:collapse; background:#171a21; border-radius:8px; overflow:hidden; }
@@ -41,7 +40,6 @@
 <div class="wrap">
   <div id="chart"></div>
   <div class="panel" id="metrics"></div>
-  <canvas id="equity"></canvas>
   <div class="section-title">交易明细</div>
   <table id="trades">
     <thead><tr><th>类型</th><th>日期</th><th>价格</th><th>盈亏</th></tr></thead>
@@ -61,35 +59,35 @@ function fmt(n, d=2){ return Number(n).toLocaleString('zh-CN',{minimumFractionDi
 function cls(v){ return v>=0 ? 'pos' : 'neg'; }
 function sign(v){ return v>=0 ? '+' : ''; }
 
-function drawEquity(equity){
-  const cv = document.getElementById('equity');
-  const dpr = window.devicePixelRatio || 1;
-  const w = cv.clientWidth, h = cv.clientHeight;
-  cv.width = w*dpr; cv.height = h*dpr;
-  const ctx = cv.getContext('2d'); ctx.scale(dpr,dpr);
-  ctx.clearRect(0,0,w,h);
-  if(!equity.length) return;
-  const vals = equity.map(e=>e.value);
-  const min = Math.min(...vals), max = Math.max(...vals);
-  const x = i => w * i/(vals.length-1 || 1);
-  const y = v => h - 10 - (h-20) * (v-min)/((max-min)||1);
-  ctx.strokeStyle = '#1f77b4'; ctx.lineWidth = 1.5; ctx.beginPath();
-  vals.forEach((v,i)=> i? ctx.lineTo(x(i),y(v)) : ctx.moveTo(x(i),y(v)));
-  ctx.stroke();
-  ctx.fillStyle = '#8b93a1'; ctx.font = '12px sans-serif';
-  ctx.fillText('账户权益  '+fmt(vals[vals.length-1]), 8, 16);
-}
-
 /* ---- klinecharts v10 ---- */
+// 自定义权益曲线指标, 画在独立 pane 中, 与 K 线同步滚动缩放
+let equityMap = {};
+klinecharts.registerIndicator({
+  name: 'EQUITY',
+  shortName: '账户权益',
+  series: 'price',
+  precision: 0,
+  figures: [{ key: 'equity', title: '权益: ', type: 'line' }],
+  calc: function(dataList) {
+    return dataList.map(function(d) {
+      return { equity: equityMap[d.timestamp] != null ? equityMap[d.timestamp] : null };
+    });
+  }
+});
+
 const chart = klinecharts.init('chart');
-let inited = false;
 
 function render(idx){
   const r = RUNS[idx];
   if (!r) return;
 
-  // 清除旧覆盖物
+  // 清除旧覆盖物和旧指标
   chart.removeOverlay();
+  chart.removeIndicator({ name: 'EQUITY' });
+
+  // 构建权益曲线 timestamp→value 映射
+  equityMap = {};
+  r.equity.forEach(e => { equityMap[e.timestamp] = e.value; });
 
   // v10 要求 _symbol + _period + _dataLoader 三者都就绪才会调用 getBars
   // setSymbol / setPeriod 内部会触发 resetData, 但首次调用时 _dataLoader 还没设置, 不会触发 getBars
@@ -101,6 +99,9 @@ function render(idx){
       callback(r.candles, false);  // false = 没有更多数据
     }
   });
+
+  // 在独立 pane 中创建权益曲线指标 (与 K 线同步滚动缩放)
+  chart.createIndicator({ name: 'EQUITY', paneId: 'equity_pane' });
 
   // 买卖点 (simpleAnnotation: 虚线+箭头+文字)
   r.buys.forEach(p=>{
@@ -136,7 +137,6 @@ function render(idx){
   ];
   document.getElementById('metrics').innerHTML = cards.map(c=>
     `<div class="card"><div class="k">${c[0]}</div><div class="v ${c[2]}">${c[1]}</div></div>`).join('');
-  drawEquity(r.equity);
 
   // 交易明细表: 从 vectorbt 实际成交记录构建 (sells 中已含 pnl 和 return)
   const trades = [];
