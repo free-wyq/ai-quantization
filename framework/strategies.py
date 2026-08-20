@@ -1,70 +1,52 @@
-"""基于 backtrader 的专业策略实现
+"""向量化策略信号 (替代 backtrader 版)
 
-相比手写的玩具策略, 这里用 backtrader 的事件驱动框架:
-- 框架自动管理仓位、手续费、下单
-- 配合 Analyzer 可直接输出夏普比率、最大回撤、胜率等
+与 backtrader 的 next() 事件驱动不同, 这里一次性对整个价格序列计算信号:
+- entries: 布尔 Series, True 表示该根 K 线产生买入信号
+- exits:   布尔 Series, True 表示该根 K 线产生平仓信号
+由 run.py 统一交给 vbt.Portfolio.from_signals 跑回测, 框架自动管仓位/手续费/下单。
+
+向量化优势: 改参数秒出结果, 且 vbt 自带 Plotly 交互图(买卖点天然清晰)。
 """
 
-import backtrader as bt
+
+def ma_strategy(df, fast=5, slow=20):
+    """双均线交叉 (金叉买入, 死叉平仓)"""
+    close = df["close"]
+    ma_fast = close.rolling(fast).mean()
+    ma_slow = close.rolling(slow).mean()
+    # 金叉: 快线上穿慢线; 死叉: 快线下穿慢线
+    entries = (ma_fast > ma_slow) & (ma_fast.shift(1) <= ma_slow.shift(1))
+    exits = (ma_fast < ma_slow) & (ma_fast.shift(1) >= ma_slow.shift(1))
+    return entries.fillna(False), exits.fillna(False)
 
 
-class MAStrategy(bt.Strategy):
-    """双均线交叉策略 (backtrader 版)"""
-
-    params = (("fast", 5), ("slow", 20))
-
-    def __init__(self):
-        self.ma_fast = bt.ind.SMA(period=self.p.fast)
-        self.ma_slow = bt.ind.SMA(period=self.p.slow)
-        self.crossover = bt.ind.CrossOver(self.ma_fast, self.ma_slow)
-
-    def next(self):
-        if not self.position:
-            if self.crossover > 0:
-                self.buy()
-        elif self.crossover < 0:
-            self.close()
+def macd_strategy(df, fast=12, slow=26, signal=9):
+    """MACD 金叉死叉 (DIF 上穿 DEA 买入, 下穿平仓)"""
+    close = df["close"]
+    ema_fast = close.ewm(span=(fast,), adjust=False).mean()
+    ema_slow = close.ewm(span=(slow,), adjust=False).mean()
+    dif = ema_fast - ema_slow
+    dea = dif.ewm(span=(signal,), adjust=False).mean()
+    entries = (dif > dea) & (dif.shift(1) <= dea.shift(1))
+    exits = (dif < dea) & (dif.shift(1) >= dea.shift(1))
+    return entries.fillna(False), exits.fillna(False)
 
 
-class MACDStrategy(bt.Strategy):
-    """MACD 金叉死叉策略 (backtrader 版)"""
+def turtle_strategy(df, entry=20, exit=20):
+    """海龟法则 / 唐奇安通道 (收盘价突破 N 日最高买入, 跌破 N 日最低平仓)
 
-    params = (("fast", 12), ("slow", 26), ("signal", 9))
-
-    def __init__(self):
-        self.macd = bt.ind.MACD(
-            period_me1=self.p.fast,
-            period_me2=self.p.slow,
-            period_signal=self.p.signal,
-        )
-        self.crossover = bt.ind.CrossOver(self.macd.macd, self.macd.signal)
-
-    def next(self):
-        if not self.position:
-            if self.crossover > 0:
-                self.buy()
-        elif self.crossover < 0:
-            self.close()
-
-
-class TurtleStrategy(bt.Strategy):
-    """海龟法则 / 唐奇安通道 (backtrader 版)
-
-    入场: 收盘价突破 N 日最高 (上轨)
-    离场: 收盘价跌破 N 日最低 (下轨)
-    用 [-1] 取上一根K线的高/低点, 避免未来函数
+    用 shift(1) 取上一根 K 线的高低点, 避免未来函数。
     """
+    high, low, close = df["high"], df["low"], df["close"]
+    highest = high.rolling(entry).max().shift(1)   # 上一根为止的 N 日最高
+    lowest = low.rolling(exit).min().shift(1)      # 上一根为止的 N 日最低
+    entries = close >= highest
+    exits = close <= lowest
+    return entries.fillna(False), exits.fillna(False)
 
-    params = (("entry", 20), ("exit", 20))
 
-    def __init__(self):
-        self.highest = bt.ind.Highest(self.data.high, period=self.p.entry)
-        self.lowest = bt.ind.Lowest(self.data.low, period=self.p.exit)
-
-    def next(self):
-        if not self.position:
-            if self.data.close[0] >= self.highest[-1]:
-                self.buy()
-        else:
-            if self.data.close[0] <= self.lowest[-1]:
-                self.close()
+STRATS = {
+    "ma": ma_strategy,
+    "macd": macd_strategy,
+    "turtle": turtle_strategy,
+}
