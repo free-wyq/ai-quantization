@@ -51,6 +51,10 @@
 <script>
 const RUNS = window.__RUNS__ || [];
 const sel = document.getElementById('sel');
+const chartEl = document.getElementById('chart');
+const metricsEl = document.getElementById('metrics');
+const tradesBody = document.querySelector('#trades tbody');
+
 RUNS.forEach((r, i) => {
   const o = document.createElement('option');
   o.value = i; o.textContent = r.label; sel.appendChild(o);
@@ -59,9 +63,16 @@ RUNS.forEach((r, i) => {
 function fmt(n, d=2){ return Number(n).toLocaleString('zh-CN',{minimumFractionDigits:d,maximumFractionDigits:d}); }
 function cls(v){ return v>=0 ? 'pos' : 'neg'; }
 function sign(v){ return v>=0 ? '+' : ''; }
+function fmtDate(ts){
+  const d = new Date(ts);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
 
 /* ---- klinecharts v10 ---- */
-// 自定义权益曲线指标, 画在独立 pane 中, 与 K 线同步滚动缩放
+const MAX_BARS = 150;
+const SCROLL_OFFSET = 3;  // scrollToDataIndex 边界修正值
+
+// 自定义权益曲线指标
 let equityMap = {};
 klinecharts.registerIndicator({
   name: 'EQUITY',
@@ -69,85 +80,70 @@ klinecharts.registerIndicator({
   series: 'price',
   precision: 0,
   figures: [{ key: 'equity', title: '权益: ', type: 'line' }],
-  calc: function(dataList) {
-    return dataList.map(function(d) {
-      return { equity: equityMap[d.timestamp] != null ? equityMap[d.timestamp] : null };
-    });
-  }
+  calc: dataList => dataList.map(d => ({
+    equity: equityMap[d.timestamp] != null ? equityMap[d.timestamp] : null
+  }))
 });
 
 const chart = klinecharts.init('chart');
 chart.setStyles({
-  grid: {
-    horizontal: { color: 'transparent' },
-    vertical: { color: 'transparent' }
-  },
+  grid: { horizontal: { color: 'transparent' }, vertical: { color: 'transparent' } },
   crosshair: {
     horizontal: { text: { backgroundColor: '#1f77b4' } },
     vertical: { text: { backgroundColor: '#1f77b4' } }
   }
 });
 
+// 买卖点标注 (simpleAnnotation: 虚线+箭头+文字)
+function addAnnotation(point, label, color) {
+  try {
+    chart.createOverlay({
+      name: 'simpleAnnotation',
+      lock: true,
+      points: [{ timestamp: point.timestamp, value: point.price }],
+      extendData: label,
+      styles: { line: { color, style: 'dashed' }, text: { color, size: 13, weight: 'bold' } }
+    });
+  } catch(e) { console.warn('overlay:', e); }
+}
+
 function render(idx){
   const r = RUNS[idx];
   if (!r) return;
 
-  // 清除旧覆盖物和旧指标
   chart.removeOverlay();
   chart.removeIndicator({ name: 'EQUITY' });
   chart.removeIndicator({ name: 'VOL' });
 
-  // 构建权益曲线 timestamp→value 映射
+  // 权益曲线映射
   equityMap = {};
   r.equity.forEach(e => { equityMap[e.timestamp] = e.value; });
 
-  // v10 要求 _symbol + _period + _dataLoader 三者都就绪才会调用 getBars
-  // setSymbol / setPeriod 内部会触发 resetData, 但首次调用时 _dataLoader 还没设置, 不会触发 getBars
-  // 最后 setDataLoader 设置 _dataLoader, 三者齐全, getBars 被调用
+  // v10: setSymbol + setPeriod + setDataLoader 三者就绪后触发 getBars
   chart.setSymbol({ ticker: r.symbol });
   chart.setPeriod({ type: 'day', span: 1 });
   chart.setDataLoader({
     getBars: ({ callback }) => {
-      callback(r.candles, false);  // false = 没有更多数据
-      // 数据加载完成后，设置柱宽并让首根K线显示在最左侧
+      callback(r.candles, false);
+      // 设置柱宽并让首根K线显示在最左侧
       setTimeout(() => {
-        const chartWidth = document.getElementById('chart').clientWidth;
-        const maxBars = 150;
-        const visibleBars = Math.min(r.candles.length, maxBars);
-        const barSpace = Math.max(4, Math.min(50, Math.floor(chartWidth / visibleBars)));
+        const w = chartEl.clientWidth;
+        const visibleBars = Math.min(r.candles.length, MAX_BARS);
+        const barSpace = Math.max(4, Math.min(50, Math.floor(w / visibleBars)));
         chart.setBarSpace(barSpace);
-        // scrollToDataIndex(n) 会把第n根K线放到右侧边缘
-        // 所以滚动到 fitBars-1，让 0~fitBars-1 根K线从左到右显示
-        const fitBars = Math.floor(chartWidth / barSpace);
-        const scrollIdx = Math.min(r.candles.length - 1, fitBars - 3);
-        chart.scrollToDataIndex(scrollIdx);
+        // scrollToDataIndex(n) 将第n根放到右侧边缘，滚动到 fitBars-offset 使首根在左侧
+        const fitBars = Math.floor(w / barSpace);
+        chart.scrollToDataIndex(Math.min(r.candles.length - 1, fitBars - SCROLL_OFFSET));
       }, 50);
     }
   });
 
-  // 在独立 pane 中创建成交量和权益曲线指标 (与 K 线同步滚动缩放)
   chart.createIndicator({ name: 'VOL', paneId: 'vol_pane' });
   chart.createIndicator({ name: 'EQUITY', paneId: 'equity_pane' });
 
-  // 买卖点 (simpleAnnotation: 虚线+箭头+文字)
-  r.buys.forEach(p=>{
-    try { chart.createOverlay({
-      name: 'simpleAnnotation',
-      lock: true,
-      points: [{ timestamp: p.timestamp, value: p.price }],
-      extendData: 'B',
-      styles: { line: { color: '#ff4d4f', style: 'dashed' }, text: { color: '#ff4d4f', size: 13, weight: 'bold' } }
-    }); } catch(e){ console.warn('buy overlay:', e); }
-  });
-  r.sells.forEach(p=>{
-    try { chart.createOverlay({
-      name: 'simpleAnnotation',
-      lock: true,
-      points: [{ timestamp: p.timestamp, value: p.price }],
-      extendData: 'S',
-      styles: { line: { color: '#00c853', style: 'dashed' }, text: { color: '#00c853', size: 13, weight: 'bold' } }
-    }); } catch(e){ console.warn('sell overlay:', e); }
-  });
+  // 买卖点标注
+  r.buys.forEach(p => addAnnotation(p, 'B', '#ff4d4f'));
+  r.sells.forEach(p => addAnnotation(p, 'S', '#00c853'));
 
   // 指标卡片
   const m = r.metrics;
@@ -161,27 +157,21 @@ function render(idx){
     ['胜率', fmt(m.win_rate)+'%', ''],
     ['盈亏比', m.profit_factor===Infinity?'∞':fmt(m.profit_factor), ''],
   ];
-  document.getElementById('metrics').innerHTML = cards.map(c=>
+  metricsEl.innerHTML = cards.map(c =>
     `<div class="card"><div class="k">${c[0]}</div><div class="v ${c[2]}">${c[1]}</div></div>`).join('');
 
-  // 交易明细表: 从 vectorbt 实际成交记录构建 (sells 中已含 pnl 和 return)
+  // 交易明细表
   const trades = [];
   r.buys.forEach((b, i) => {
     const s = r.sells[i];
     trades.push({type:'买入', date:b.timestamp, price:b.price, pnl:null});
     if (s) trades.push({type:'卖出', date:s.timestamp, price:s.price, pnl:s.return});
   });
-
-  const fmtDate = ts => {
-    const d = new Date(ts);
-    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-  };
-  const tbody = document.querySelector('#trades tbody');
-  tbody.innerHTML = trades.map(t=>{
-    const cls = t.type==='买入' ? 'tag-buy' : 'tag-sell';
+  tradesBody.innerHTML = trades.map(t => {
+    const tagCls = t.type==='买入' ? 'tag-buy' : 'tag-sell';
     const pnlStr = t.pnl===null ? '—' : (t.pnl>=0?'+':'')+fmt(t.pnl)+'%';
     const pnlCls = t.pnl===null ? '' : (t.pnl>=0?'pnl-pos':'pnl-neg');
-    return `<tr><td class="${cls}">${t.type}</td><td>${fmtDate(t.date)}</td><td>${fmt(t.price)}</td><td class="${pnlCls}">${pnlStr}</td></tr>`;
+    return `<tr><td class="${tagCls}">${t.type}</td><td>${fmtDate(t.date)}</td><td>${fmt(t.price)}</td><td class="${pnlCls}">${pnlStr}</td></tr>`;
   }).join('');
 }
 
