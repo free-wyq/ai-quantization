@@ -16,7 +16,8 @@
            padding:6px 10px; font-size:14px; min-width:300px; }
   .wrap { padding:0; }
   .chart-wrap { width:100%; padding-left:24px; padding-right:8px; }
-  #chart { width:100%; height:680px; background:#171a21; border-radius:8px; }
+  #equity { width:100%; height:120px; background:#171a21; border-radius:8px 8px 0 0; display:block; }
+  #chart { width:100%; height:560px; background:#171a21; border-radius:0 0 8px 8px; }
   .panel { display:flex; flex-wrap:wrap; gap:10px; margin:14px 16px; }
   .card { background:#171a21; border:1px solid #262b35; border-radius:8px; padding:10px 14px; min-width:130px; }
   .card .k { font-size:12px; color:#8b93a1; }
@@ -39,7 +40,10 @@
   <span class="hint">klinecharts 离线版 · 下拉切换历史</span>
 </header>
 <div class="wrap">
-  <div class="chart-wrap"><div id="chart"></div></div>
+  <div class="chart-wrap">
+    <canvas id="equity"></canvas>
+    <div id="chart"></div>
+  </div>
   <div class="panel" id="metrics"></div>
   <div class="section-title">交易明细</div>
   <table id="trades">
@@ -72,19 +76,6 @@ function fmtDate(ts){
 const MAX_BARS = 150;
 const SCROLL_OFFSET = 3;  // scrollToDataIndex 边界修正值
 
-// 自定义权益曲线指标
-let equityMap = {};
-klinecharts.registerIndicator({
-  name: 'EQUITY',
-  shortName: '账户权益',
-  series: 'price',
-  precision: 0,
-  figures: [{ key: 'equity', title: '权益: ', type: 'line' }],
-  calc: dataList => dataList.map(d => ({
-    equity: equityMap[d.timestamp] != null ? equityMap[d.timestamp] : null
-  }))
-});
-
 const chart = klinecharts.init('chart');
 chart.setStyles({
   grid: { horizontal: { color: 'transparent' }, vertical: { color: 'transparent' } },
@@ -107,17 +98,86 @@ function addAnnotation(point, label, color) {
   } catch(e) { console.warn('overlay:', e); }
 }
 
+// 权益曲线 (独立 canvas, 位于 K 线图上方)
+const equityCv = document.getElementById('equity');
+function drawEquity(equity) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = equityCv.clientWidth, h = equityCv.clientHeight;
+  equityCv.width = w * dpr; equityCv.height = h * dpr;
+  const ctx = equityCv.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+  if (!equity || !equity.length) return;
+  const vals = equity.map(e => e.value);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const range = (max - min) || 1;
+  const padX = 10, padY = 14;
+  const x = i => padX + (w - padX * 2) * i / (vals.length - 1 || 1);
+  const y = v => h - padY - (h - padY * 2) * (v - min) / range;
+  // 填充区域
+  ctx.beginPath();
+  vals.forEach((v, i) => i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v)));
+  ctx.lineTo(x(vals.length - 1), h);
+  ctx.lineTo(x(0), h);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, 'rgba(31,119,180,0.35)');
+  grad.addColorStop(1, 'rgba(31,119,180,0)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+  // 曲线
+  ctx.strokeStyle = '#1f77b4';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  vals.forEach((v, i) => i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v)));
+  ctx.stroke();
+  // 标签
+  ctx.fillStyle = '#8b93a1';
+  ctx.font = '12px -apple-system,"PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.fillText('账户权益  ' + fmt(vals[vals.length - 1]), 10, 16);
+}
+
+// 策略曲线: 动态注册并绘制
+let registeredStratInds = [];
+function renderStrategyIndicators(r) {
+  // 清除旧策略指标
+  registeredStratInds.forEach(name => chart.removeIndicator({ name }));
+  registeredStratInds = [];
+  if (!r.indicators || !r.indicators.length) return;
+
+  r.indicators.forEach(ind => {
+    const figKey = 'val';
+    const figType = ind.type || 'line';
+    const figStyle = ind.lineStyle || 'solid';
+    const figWidth = ind.lineWidth || 1;
+    klinecharts.registerIndicator({
+      name: ind.name,
+      shortName: ind.shortName,
+      series: ind.pane === 'main' ? 'price' : 'normal',
+      precision: 4,
+      figures: [{ key: figKey, title: ind.shortName + ': ', type: figType }],
+      calc: dataList => dataList.map((d, i) => ({
+        [figKey]: (i < ind.values.length && ind.values[i] != null) ? ind.values[i] : null
+      }))
+    });
+    const paneId = ind.pane === 'main' ? 'candle_pane' : ('strat_' + (ind.paneId || ind.name));
+    chart.createIndicator({
+      name: ind.name, paneId,
+      styles: { lines: [{ color: ind.color, style: figStyle, size: figWidth }] }
+    });
+    registeredStratInds.push(ind.name);
+  });
+}
+
 function render(idx){
   const r = RUNS[idx];
   if (!r) return;
 
   chart.removeOverlay();
-  chart.removeIndicator({ name: 'EQUITY' });
   chart.removeIndicator({ name: 'VOL' });
 
-  // 权益曲线映射
-  equityMap = {};
-  r.equity.forEach(e => { equityMap[e.timestamp] = e.value; });
+  // 权益曲线
+  drawEquity(r.equity);
 
   // v10: setSymbol + setPeriod + setDataLoader 三者就绪后触发 getBars
   chart.setSymbol({ ticker: r.symbol });
@@ -139,7 +199,9 @@ function render(idx){
   });
 
   chart.createIndicator({ name: 'VOL', paneId: 'vol_pane' });
-  chart.createIndicator({ name: 'EQUITY', paneId: 'equity_pane' });
+
+  // 策略曲线 (MA均线/唐奇安通道/MACD等, 由策略函数动态提供)
+  renderStrategyIndicators(r);
 
   // 买卖点标注
   r.buys.forEach(p => addAnnotation(p, 'B', '#ff4d4f'));

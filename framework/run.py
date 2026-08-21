@@ -1,10 +1,15 @@
 """专业回测运行器 (vectorbt 向量化)
 
 用法:
-    python framework/run.py [策略] [股票代码]
+    python framework/run.py [策略] [股票代码] [-p key=value ...]
     python framework/run.py turtle 000001
-    python framework/run.py ma 000001
+    python framework/run.py ma 000001 -p fast=10 slow=30
     python framework/run.py macd 000001
+    python framework/run.py multi_factor 000001
+    python framework/run.py --list
+
+自研策略: 在 framework/strategies/custom/ 下新建 .py 文件,
+          定义 Strategy 子类即可被框架自动发现, 无需修改框架代码。
 
 输出专业绩效报告: 收益率 / 夏普 / 最大回撤 / 胜率 / 盈亏比
 每次运行会把结果写入 framework/results/, 并自动生成离线看板 dashboard.html
@@ -31,7 +36,7 @@ DASHBOARD_PATH = os.path.join(RESULTS_DIR, "dashboard.html")
 MAX_RUNS = 50  # 最多保留最近 50 次运行
 
 
-def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics):
+def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indicators):
     """把本次回测结果写成独立 JSON 文件 (按 代码_策略_时间 命名), 并重建看板。"""
     os.makedirs(RUNS_DIR, exist_ok=True)
     now = datetime.datetime.now()
@@ -82,6 +87,7 @@ def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics):
         "buys": buys,
         "sells": sells,
         "equity": equity,
+        "indicators": indicators,
     }
 
     # 每次运行写一个独立文件, 文件名含 代码_策略_时间
@@ -272,13 +278,16 @@ init();
 """
 
 
-def run(strategy_key: str, symbol: str, do_plot: bool = False):
+def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: dict = None):
+    if param_overrides is None:
+        param_overrides = {}
     # 1. 准备数据 (复用现有 fetcher, 带本地缓存)
     df = fetch_stock_history(symbol, "20260301", "20260818").copy()
     df = df[["open", "high", "low", "close", "volume"]].dropna()
 
     # 2. 计算策略信号 (向量化, 一次性算完)
-    entries, exits = STRATS[strategy_key](df)
+    strategy = STRATS[strategy_key](**param_overrides)
+    entries, exits, indicators = strategy.run(df)
 
     # 3. 向量化回测: 手续费万三, 初始资金10万, 满仓做多
     pf = vbt.Portfolio.from_signals(
@@ -326,7 +335,7 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False):
 
     # 5. 打印专业报告
     print("\n" + "=" * 56)
-    print(f"  专业回测报告  [{strategy_key.upper()} | {symbol}]  (vectorbt)")
+    print(f"  专业回测报告  [{strategy.label} | {symbol}]  (vectorbt)")
     print("=" * 56)
     print(f"  初始资金:      {init_cash:>14,.2f}")
     print(f"  最终资产:      {final_value:>14,.2f}")
@@ -344,7 +353,7 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False):
 
     # 6. 导出结果 + 生成离线看板
     if do_plot:
-        _export_result(strategy_key, symbol, df, entries, exits, pf, metrics)
+        _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indicators)
 
 
 if __name__ == "__main__":
@@ -353,5 +362,30 @@ if __name__ == "__main__":
                         choices=list(STRATS.keys()))
     parser.add_argument("symbol", nargs="?", default="000001")
     parser.add_argument("--plot", default=True, help="导出结果并生成离线看板")
+    parser.add_argument("-p", "--params", nargs="*", default=[],
+                        help="策略参数覆盖, 格式: key=value (如: ma_slow=30)")
+    parser.add_argument("--list", action="store_true", help="列出所有可用策略")
     args = parser.parse_args()
-    run(args.strategy, args.symbol, args.plot)
+
+    if args.list:
+        print("\n可用策略:")
+        for key, cls in sorted(STRATS.items()):
+            params_str = ", ".join(f"{k}={v}" for k, v in cls.params.items())
+            print(f"  {key:16s} {cls.label:16s} 参数: {params_str}")
+        sys.exit(0)
+
+    # 解析参数覆盖: ["ma_slow=30", "rsi_period=21"] -> {"ma_slow": 30, "rsi_period": 21}
+    overrides = {}
+    for item in args.params:
+        if "=" in item:
+            k, v = item.split("=", 1)
+            try:
+                v = int(v)
+            except ValueError:
+                try:
+                    v = float(v)
+                except ValueError:
+                    pass
+            overrides[k] = v
+
+    run(args.strategy, args.symbol, args.plot, overrides)
