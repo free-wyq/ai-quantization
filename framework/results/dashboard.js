@@ -56,7 +56,7 @@ klinecharts.registerIndicator({
   }))
 });
 
-// 策略曲线: 动态注册并绘制
+// 策略曲线: 按 paneId 分组, 同 pane 的多条线合并为一个指标的多 figures
 let registeredStratInds = [];
 function renderStrategyIndicators(r) {
   // 清除旧策略指标
@@ -64,27 +64,55 @@ function renderStrategyIndicators(r) {
   registeredStratInds = [];
   if (!r.indicators || !r.indicators.length) return;
 
+  // 按 paneId 分组 (main 单独处理)
+  const groups = {};
   r.indicators.forEach(ind => {
-    const figKey = ind.name;  // 每个指标用唯一 key, 避免同 pane 冲突
-    const figType = ind.type || 'line';
-    const figStyle = ind.lineStyle || 'solid';
-    const figWidth = ind.lineWidth || 1;
+    const gid = ind.pane === 'main' ? 'candle_pane' : (ind.paneId || ind.name);
+    if (!groups[gid]) groups[gid] = [];
+    groups[gid].push(ind);
+  });
+
+  Object.entries(groups).forEach(([paneKey, inds]) => {
+    const indName = 'STRAT_' + paneKey;
+    const isMain = inds[0].pane === 'main';
+    const paneId = isMain ? 'candle_pane' : ('strat_' + paneKey);
+
+    // 构建 figures: 每条线一个 figure
+    const figures = inds.map(ind => ({
+      key: ind.name,
+      title: ind.shortName + ': ',
+      type: ind.type || 'line'
+    }));
+
+    // 构建 lines 样式: 每条线对应一个颜色
+    const lines = inds.map(ind => ({
+      color: ind.color,
+      style: ind.lineStyle || 'solid',
+      size: ind.lineWidth || 1
+    }));
+
+    // 收集各指标的 values, 供 calc 闭包引用
+    const valsMap = {};
+    inds.forEach(ind => { valsMap[ind.name] = ind.values; });
+
     klinecharts.registerIndicator({
-      name: ind.name,
-      shortName: ind.shortName,
-      series: ind.pane === 'main' ? 'price' : 'normal',
+      name: indName,
+      shortName: inds.map(i => i.shortName).join(' / '),
+      series: isMain ? 'price' : 'normal',
       precision: 4,
-      figures: [{ key: figKey, title: ind.shortName + ': ', type: figType }],
-      calc: dataList => dataList.map((d, i) => ({
-        [figKey]: (i < ind.values.length && ind.values[i] != null) ? ind.values[i] : null
-      }))
+      figures: figures,
+      calc: dataList => dataList.map((d, i) => {
+        const row = {};
+        inds.forEach(ind => {
+          row[ind.name] = (i < valsMap[ind.name].length && valsMap[ind.name][i] != null)
+            ? valsMap[ind.name][i] : null;
+        });
+        return row;
+      })
     });
-    const paneId = ind.pane === 'main' ? 'candle_pane' : ('strat_' + (ind.paneId || ind.name));
-    chart.createIndicator({
-      name: ind.name, paneId,
-      styles: { lines: [{ color: ind.color, style: figStyle, size: figWidth }] }
-    });
-    registeredStratInds.push(ind.name);
+
+    chart.createIndicator({ name: indName, paneId, styles: { lines } });
+    registeredStratInds.push(indName);
   });
 }
 
