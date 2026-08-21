@@ -24,6 +24,26 @@ const SCROLL_OFFSET = 3;  // scrollToDataIndex 边界修正值
 const chart = klinecharts.init('chart');
 chart.setStyles({
   grid: { horizontal: { color: 'transparent' }, vertical: { color: 'transparent' } },
+  candle: {
+    bar: {
+      upColor: '#ef5350',        // 涨: 红
+      downColor: '#26a69a',      // 跌: 绿
+      noChangeColor: '#888888',
+      upBorderColor: '#ef5350',
+      downBorderColor: '#26a69a',
+      noChangeBorderColor: '#888888',
+      upWickColor: '#ef5350',
+      downWickColor: '#26a69a',
+      noChangeWickColor: '#888888'
+    }
+  },
+  indicator: {
+    bars: [{
+      upColor: '#ef5350',        // 涨: 红
+      downColor: '#26a69a',      // 跌: 绿
+      noChangeColor: '#888888'
+    }]
+  },
   crosshair: {
     horizontal: { text: { backgroundColor: '#1f77b4' } },
     vertical: { text: { backgroundColor: '#1f77b4' } }
