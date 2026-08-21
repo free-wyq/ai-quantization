@@ -1,20 +1,33 @@
 # AI 量化交易系统
 
-基于 Python 的量化交易学习项目，包含数据获取、策略编写、回测引擎等模块。
+基于 Python + vectorbt 的量化交易学习项目，包含数据获取、策略编写、回测引擎、可视化看板。
 
 ## 项目结构
 
 ```
 ai-Quantification/
-├── config/             # 配置文件
-│   └── settings.py     # 全局配置 (资金、手续费、路径等)
-├── data/               # 数据模块
-│   └── fetcher.py      # 行情数据获取 (akshare)
-├── framework/          # 专业回测框架 (backtrader)
-│   ├── strategies.py   # backtrader 版策略 (MA/MACD/海龟)
-│   └── run.py          # 专业回测运行入口
-├── requirements.txt    # 项目依赖
-├── .env.example        # 环境变量示例
+├── config/                # 配置
+│   └── settings.py        # 全局配置 (资金、手续费、路径等)
+├── data/                  # 数据模块
+│   └── fetcher.py         # 行情数据获取 (akshare + 本地缓存)
+├── framework/             # 回测框架
+│   ├── run.py             # 回测入口
+│   ├── serve_dashboard.py # 看板服务
+│   ├── strategies/        # 策略包 (自动发现)
+│   │   ├── base.py        # 策略基类
+│   │   ├── ma.py          # 双均线交叉
+│   │   ├── macd.py        # MACD
+│   │   ├── adx.py         # ADX 趋势强度
+│   │   ├── rsi.py         # RSI 超买超卖
+│   │   ├── obv.py         # OBV 能量潮
+│   │   ├── regime.py      # 市场状态自适应
+│   │   ├── turtle.py      # 唐奇安通道
+│   │   └── custom/        # 用户自定义策略
+│   └── results/           # 看板前端 + 回测结果
+│       ├── dashboard.js   # klinecharts 可视化
+│       ├── dashboard.css
+│       └── index.html
+├── requirements.txt
 └── README.md
 ```
 
@@ -29,66 +42,70 @@ venv\Scripts\activate          # Windows
 pip install -r requirements.txt
 ```
 
-### 2. 运行示例
-
-使用专业回测框架 `framework/run.py`（基于 backtrader，输出收益率/夏普比率/最大回撤/胜率/盈亏比）：
+### 2. 运行回测
 
 ```bash
-# 默认: 海龟策略 + 平安银行(000001)
+# 默认: regime 策略 + 平安银行(000001)
 python framework/run.py
 
 # 指定策略与股票
 python framework/run.py ma 600519
 python framework/run.py macd 000001
+python framework/run.py regime 000001
 
-# 生成收益曲线图
-python framework/run.py turtle 000001 --plot
+# 查看可用策略
+python framework/run.py --list
 ```
 
-程序会自动获取对应股票 2024 年的日线数据并回测，首次联网下载后缓存到 `data/`，之后离线可用。
+### 3. 查看看板
 
-### 3. 自定义策略
+```bash
+python framework/serve_dashboard.py
+# 浏览器打开 http://localhost:8080
+```
 
-在 `framework/strategies.py` 中新增一个 `bt.Strategy` 子类，并在 `run.py` 的 `STRATS` 字典里注册即可：
+看板展示 K 线 + 买卖标注 + 成交量 + 权益曲线 + 策略指标，支持十字光标联动。
+
+### 4. 自定义策略
+
+在 `framework/strategies/custom/` 下新建 `.py` 文件，继承 `Strategy` 类：
 
 ```python
-import backtrader as bt
+from ..base import Strategy, series_to_list
 
-class MyStrategy(bt.Strategy):
-    params = (("period", 20),)
+class MyStrategy(Strategy):
+    name = "my"
+    label = "我的策略"
+    params = {"period": 20}
 
-    def __init__(self):
-        self.ma = bt.ind.SMA(period=self.p.period)
-
-    def next(self):
-        if not self.position and self.data.close[0] > self.ma[0]:
-            self.buy()
-        elif self.position and self.data.close[0] < self.ma[0]:
-            self.close()
+    def run(self, df):
+        close = df["close"]
+        n = len(df)
+        ma = close.rolling(self.params["period"]).mean()
+        entries = close > ma
+        exits = close < ma
+        indicators = [
+            {"name": "MA", "shortName": "MA20", "pane": "main",
+             "color": "#ffa940", "values": series_to_list(ma, n)},
+        ]
+        return entries.fillna(False), exits.fillna(False), indicators
 ```
 
-```python
-# framework/run.py 中注册
-STRATS = {..., "my": MyStrategy}
-```
+框架自动发现，无需修改任何框架代码。
 
-## 核心模块说明
+## 策略一览
 
-| 模块 | 说明 |
-|------|------|
-| `data/fetcher.py` | 使用 akshare 获取 A 股历史行情数据 |
-| `framework/strategies.py` | backtrader 版策略 (MA / MACD / 海龟)，定义交易逻辑 |
-| `framework/run.py` | 专业回测运行入口，内置夏普/回撤/胜率等指标 |
-
-## 学习路线建议
-
-1. **数据获取** - 熟悉 `data/fetcher.py`，尝试获取不同股票的数据
-2. **技术指标** - 在策略中添加 MACD、RSI、布林带等指标
-3. **策略编写** - 基于 `bt.Strategy` 实现自己的策略
-4. **回测优化** - 调整参数，观察夏普比率、最大回撤变化
-5. **实盘对接** - 学习使用券商 API 进行模拟/实盘交易
+| 策略 | 类型 | 适合市场 | 说明 |
+|------|------|---------|------|
+| ma | 趋势 | 单边趋势 | 双均线交叉，快线上穿慢线买入 |
+| macd | 趋势 | 单边趋势 | MACD 柱状图由负转正买入 |
+| adx | 趋势 | 强趋势 | ADX>25 且 +DI/-DI 交叉 |
+| rsi | 震荡 | 横盘震荡 | RSI 超卖买入、超买卖出 |
+| obv | 量价 | 趋势确认 | OBV 上穿均线买入 |
+| regime | 自适应 | 全市场 | ADX 判断市场状态，自动切换 MA/RSI |
+| turtle | 趋势 | 强趋势 | 唐奇安通道突破 |
 
 ## 数据源
 
 - [akshare](https://akshare.akfamily.xyz/) - 免费 A 股数据 (无需注册)
-- [tushare](https://tushare.pro/) - 需注册获取 token，数据更丰富
+- 本地缓存，首次下载后离线可用
