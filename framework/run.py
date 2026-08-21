@@ -180,7 +180,7 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="专业回测运行器 (vectorbt)")
-    parser.add_argument("strategy", nargs="?", default="adx",
+    parser.add_argument("strategy", nargs="?", default="regime",
                         choices=list(STRATS.keys()))
     parser.add_argument("symbol", nargs="?", default="000001")
     parser.add_argument("--plot", default=True, help="导出结果并生成离线看板")
