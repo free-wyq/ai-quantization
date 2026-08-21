@@ -73,4 +73,5 @@ class Strategy:
 
 def series_to_list(s, n):
     """pandas Series -> list[float|None], NaN 转 None"""
-    return [None if np.isnan(v) else round(float(v), 4) for v in s.reindex(range(n)).values]
+    vals = s.values
+    return [None if np.isnan(v) else round(float(v), 4) for v in vals[:n]]

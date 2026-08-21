@@ -282,7 +282,7 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: 
     if param_overrides is None:
         param_overrides = {}
     # 1. 准备数据 (复用现有 fetcher, 带本地缓存)
-    df = fetch_stock_history(symbol, "20260301", "20260818").copy()
+    df = fetch_stock_history(symbol, "20260101", "20260818").copy()
     df = df[["open", "high", "low", "close", "volume"]].dropna()
 
     # 2. 计算策略信号 (向量化, 一次性算完)
