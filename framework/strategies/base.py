@@ -1,6 +1,10 @@
 """策略基类与工具函数"""
 
+import warnings
+from typing import Any
+
 import numpy as np
+import pandas as pd
 
 
 class Strategy:
@@ -44,28 +48,28 @@ class Strategy:
             if k in self.params:
                 self.params[k] = v
             else:
-                print(f"  [警告] 策略 {self.name} 无参数 '{k}'，已忽略")
+                warnings.warn(f"策略 {self.name} 无参数 '{k}'，已忽略", stacklevel=2)
 
-    def run(self, df):
-        """返回 (entries, exits, indicators)
+    def run(self, df: pd.DataFrame) -> tuple[pd.Series, pd.Series, list[dict[str, Any]]]:
+        """计算策略信号与指标
 
         Args:
-            df: DataFrame, 含 open/high/low/close/volume 列
+            df: K线数据, 含 open/high/low/close/volume 列, 每行代表一个交易日
 
         Returns:
-            entries: 布尔 Series, True 表示买入信号
-            exits:   布尔 Series, True 表示平仓信号
-            indicators: list[dict], 每项描述一条策略曲线:
+            entries: 布尔 Series (与 df 等长), True 表示该日触发买入信号
+            exits:   布尔 Series (与 df 等长), True 表示该日触发平仓信号
+            indicators: 指标列表, 每项是一条可视化曲线, 结构如下:
                 {
-                    "name": "MA5",           # 唯一标识
-                    "shortName": "MA5",       # 图例显示名
-                    "pane": "separate",        # "separate" 独立副图
-                    "paneId": "macd",         # 仅 separate 有效: 相同 paneId 共享一个副图
-                    "color": "#ffa940",       # 线条颜色
-                    "lineStyle": "solid",     # 可选: "solid"(实线) / "dashed"(虚线), 默认 solid
-                    "lineWidth": 1,           # 可选: 线宽, 默认 1
-                    "type": "line",           # 可选: "line"(折线) / "bar"(柱状), 默认 line
-                    "values": [float|None],   # 与 df 等长
+                    "name": str,            # 唯一标识, 如 "MA5"
+                    "shortName": str,       # 图例显示名, 如 "MA5"
+                    "pane": str,            # "main" 叠加在K线上 / "separate" 独立副图
+                    "paneId": str,          # 仅 separate 有效, 相同 paneId 共享一个副图
+                    "color": str,           # 线条颜色, 如 "#ffa940"
+                    "lineStyle": str,       # 可选: "solid"(实线) / "dashed"(虚线), 默认 solid
+                    "lineWidth": int,       # 可选: 线宽, 默认 1
+                    "type": str,            # 可选: "line"(折线) / "bar"(柱状), 默认 line
+                    "values": list[float|None],  # 与 df 等长的数值序列, NaN 用 None
                 }
         """
         raise NotImplementedError

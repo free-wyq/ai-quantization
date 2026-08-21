@@ -4,8 +4,8 @@
     python framework/run.py [策略] [股票代码] [-p key=value ...]
     python framework/run.py turtle 000001
     python framework/run.py ma 000001 -p fast=10 slow=30
-    python framework/run.py macd 000001
-    python framework/run.py multi_factor 000001
+    python framework/run.py regime 000001 --sl 5 --tp 10
+    python framework/run.py ma 000001 --optimize
     python framework/run.py --list
 
 自研策略: 在 framework/strategies/custom/ 下新建 .py 文件,
@@ -33,6 +33,13 @@ from framework.strategies import STRATS
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 RUNS_DIR = os.path.join(RESULTS_DIR, "runs")
 MAX_RUNS = 50  # 最多保留最近 50 次运行
+
+# ===== A股交易成本模型 =====
+# 买入: 佣金万3 (最低5元) + 过户费万0.1(沪市)
+# 卖出: 佣金万3 (最低5元) + 印花税千1 + 过户费万0.1(沪市)
+# 买卖平均费率: (0.0003 + 0.0013) / 2 ≈ 0.0008
+COST_FEES = 0.0008      # 佣金+印花税 (买卖平均)
+COST_SLIPPAGE = 0.001   # 滑点 0.1%
 
 
 def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indicators):
@@ -91,8 +98,8 @@ def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indica
 
     # 每次运行写一个独立文件, 文件名含 代码_策略_时间
     filename = run_data["file"]
-    json.dump(run_data, open(os.path.join(RUNS_DIR, filename), "w", encoding="utf-8"),
-              ensure_ascii=False, indent=2)
+    with open(os.path.join(RUNS_DIR, filename), "w", encoding="utf-8") as f:
+        json.dump(run_data, f, ensure_ascii=False, indent=2)
 
     print(f"  结果已存档: framework/results/runs/{filename}")
     print(f"  看板服务:   framework/ 目录下执行  python serve_dashboard.py")
@@ -100,25 +107,30 @@ def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indica
     print(f"  (每次刷新页面都会自动加载最新回测记录)")
 
 
-def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: dict = None):
+def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: dict = None,
+        sl_stop: float = None, tp_stop: float = None,
+        start_date: str = "20260101", end_date: str = "20260818"):
     if param_overrides is None:
         param_overrides = {}
     # 1. 准备数据 (复用现有 fetcher, 带本地缓存)
-    df = fetch_stock_history(symbol, "20260101", "20260818").copy()
+    df = fetch_stock_history(symbol, start_date, end_date).copy()
     df = df[["open", "high", "low", "close", "volume"]].dropna()
 
     # 2. 计算策略信号 (向量化, 一次性算完)
     strategy = STRATS[strategy_key](**param_overrides)
     entries, exits, indicators = strategy.run(df)
 
-    # 3. 向量化回测: 手续费万三, 初始资金10万, 满仓做多
+    # 3. 向量化回测: A股成本模型 (佣金+印花税+滑点), 初始资金10万, 满仓做多
     pf = vbt.Portfolio.from_signals(
         close=df["close"],
         entries=entries,
         exits=exits,
         direction="longonly",
         init_cash=100000.0,
-        fees=0.0003,
+        fees=COST_FEES,
+        slippage=COST_SLIPPAGE,
+        sl_stop=sl_stop,
+        tp_stop=tp_stop,
     )
 
     # 4. 提取指标 (vbt 需要显式频率才能年化; 日频用 freq='d')
@@ -139,7 +151,7 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: 
         win_rate = (len(wins) / n_trades * 100) if n_trades else 0.0
         sum_win = float(wins.sum()) if len(wins) else 0.0
         sum_loss = float(abs(losses.sum())) if len(losses) else 0.0
-        profit_factor = (sum_win / sum_loss) if sum_loss != 0 else float("inf")
+        profit_factor = (sum_win / sum_loss) if sum_loss != 0 else 0.0
     except Exception:
         win_rate = 0.0
         profit_factor = float("inf")
@@ -170,7 +182,12 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: 
     print("-" * 56)
     print(f"  交易次数:      {n_trades:>14}")
     print(f"  胜率:          {win_rate:>13.2f}%")
-    print(f"  盈亏比:        {profit_factor:>14.2f}" if profit_factor != float("inf") else "  盈亏比:             ∞")
+    print(f"  盈亏比:        {profit_factor:>14.2f}")
+    print("-" * 56)
+    print(f"  交易成本:      佣金万3+印花税千1 滑点0.1%")
+    sl_str = f"{sl_stop*100:.1f}%" if sl_stop else "无"
+    tp_str = f"{tp_stop*100:.1f}%" if tp_stop else "无"
+    print(f"  止损/止盈:     {sl_str} / {tp_str}")
     print("=" * 56)
 
     # 6. 导出结果 + 生成离线看板
@@ -183,11 +200,22 @@ if __name__ == "__main__":
     parser.add_argument("strategy", nargs="?", default="regime",
                         choices=list(STRATS.keys()))
     parser.add_argument("symbol", nargs="?", default="000001")
-    parser.add_argument("--plot", default=True, help="导出结果并生成离线看板")
+    parser.add_argument("--plot", action="store_true", default=True, help="导出结果并生成离线看板")
+    parser.add_argument("--no-plot", action="store_false", dest="plot", help="不生成看板")
     parser.add_argument("-p", "--params", nargs="*", default=[],
                         help="策略参数覆盖, 格式: key=value (如: ma_slow=30)")
+    parser.add_argument("--sl", type=float, default=None, help="止损比例(%%), 如 --sl 5 表示5%%止损")
+    parser.add_argument("--tp", type=float, default=None, help="止盈比例(%%), 如 --tp 10 表示10%%止盈")
+    parser.add_argument("--start", type=str, default="20260101", help="回测起始日期 YYYYMMDD")
+    parser.add_argument("--end", type=str, default="20260818", help="回测结束日期 YYYYMMDD")
+    parser.add_argument("--optimize", action="store_true", help="参数网格搜索 + 样本外验证")
     parser.add_argument("--list", action="store_true", help="列出所有可用策略")
     args = parser.parse_args()
+
+    if args.optimize:
+        from framework.optimize import optimize
+        optimize(args.strategy, args.symbol)
+        sys.exit(0)
 
     if args.list:
         print("\n可用策略:")
@@ -210,4 +238,7 @@ if __name__ == "__main__":
                     pass
             overrides[k] = v
 
-    run(args.strategy, args.symbol, args.plot, overrides)
+    run(args.strategy, args.symbol, args.plot, overrides,
+        sl_stop=args.sl / 100 if args.sl else None,
+        tp_stop=args.tp / 100 if args.tp else None,
+        start_date=args.start, end_date=args.end)
