@@ -27,7 +27,7 @@ class Strategy:
                 entries = close > ma
                 exits = close < ma
                 indicators = [
-                    {"name": "MA", "shortName": "MA", "pane": "main",
+                    {"name": "MA", "shortName": "MA", "pane": "separate", "paneId": "ma",
                      "color": "#ffa940", "values": series_to_list(ma, n)},
                 ]
                 return entries.fillna(False), exits.fillna(False), indicators
@@ -59,7 +59,7 @@ class Strategy:
                 {
                     "name": "MA5",           # 唯一标识
                     "shortName": "MA5",       # 图例显示名
-                    "pane": "main",           # "main" 叠加K线, "separate" 独立副图
+                    "pane": "separate",        # "separate" 独立副图
                     "paneId": "macd",         # 仅 separate 有效: 相同 paneId 共享一个副图
                     "color": "#ffa940",       # 线条颜色
                     "lineStyle": "solid",     # 可选: "solid"(实线) / "dashed"(虚线), 默认 solid

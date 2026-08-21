@@ -1,14 +1,16 @@
 """多因子策略示例: MA 均线 + RSI 超买过滤
 
 演示多因子策略的写法:
-- 因子1 (MA): 主图叠加，双均线交叉产生信号
-- 因子2 (RSI): 独立副图，超买区过滤买入信号
+- 因子1 (MA): 副图1，双均线交叉产生信号
+- 因子2 (RSI): 副图2，超买区过滤买入信号
 
 指标布局:
   ┌─────────────────────┐
-  │  K线 + MA5 + MA20   │  ← 主图
+  │  K线                │  ← 主图
   ├─────────────────────┤
-  │  RSI                │  ← 策略副图 (paneId="rsi")
+  │  MA5 + MA20         │  ← 副图1 (paneId="ma")
+  ├─────────────────────┤
+  │  RSI                │  ← 副图2 (paneId="rsi")
   └─────────────────────┘
 """
 
@@ -46,12 +48,12 @@ class MyMultiFactor(Strategy):
         exits = (ma_f < ma_s) & (ma_f.shift(1) >= ma_s.shift(1))
 
         indicators = [
-            # 主图: MA 均线
-            {"name": "MA_F", "shortName": f"MA{p['ma_fast']}", "pane": "main",
+            # 副图1: MA 均线
+            {"name": "MA_F", "shortName": f"MA{p['ma_fast']}", "pane": "separate", "paneId": "ma",
              "color": "#ffa940", "values": series_to_list(ma_f, n)},
-            {"name": "MA_S", "shortName": f"MA{p['ma_slow']}", "pane": "main",
+            {"name": "MA_S", "shortName": f"MA{p['ma_slow']}", "pane": "separate", "paneId": "ma",
              "color": "#42a5f5", "values": series_to_list(ma_s, n)},
-            # 副图: RSI (paneId="rsi" → 独占一个窗格)
+            # 副图2: RSI (paneId="rsi" → 独占一个窗格)
             {"name": "RSI", "shortName": f"RSI{p['rsi_period']}", "pane": "separate",
              "paneId": "rsi", "color": "#ab47bc", "values": series_to_list(rsi, n)},
         ]

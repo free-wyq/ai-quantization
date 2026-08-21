@@ -17,9 +17,9 @@ class TurtleStrategy(Strategy):
         entries = close >= highest
         exits = close <= lowest
         indicators = [
-            {"name": "DC_Up", "shortName": f"DC高{p['entry']}", "pane": "main",
+            {"name": "DC_Up", "shortName": f"DC高{p['entry']}", "pane": "separate", "paneId": "dc",
              "color": "#ff6b6b", "values": series_to_list(highest, n)},
-            {"name": "DC_Low", "shortName": f"DC低{p['exit']}", "pane": "main",
+            {"name": "DC_Low", "shortName": f"DC低{p['exit']}", "pane": "separate", "paneId": "dc",
              "color": "#51cf66", "values": series_to_list(lowest, n)},
         ]
         return entries.fillna(False), exits.fillna(False), indicators

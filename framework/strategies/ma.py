@@ -17,9 +17,9 @@ class MAStrategy(Strategy):
         entries = (ma_fast > ma_slow) & (ma_fast.shift(1) <= ma_slow.shift(1))
         exits = (ma_fast < ma_slow) & (ma_fast.shift(1) >= ma_slow.shift(1))
         indicators = [
-            {"name": "MA_Fast", "shortName": f"MA{p['fast']}", "pane": "main",
+            {"name": "MA_Fast", "shortName": f"MA{p['fast']}", "pane": "separate", "paneId": "ma",
              "color": "#ffa940", "values": series_to_list(ma_fast, n)},
-            {"name": "MA_Slow", "shortName": f"MA{p['slow']}", "pane": "main",
+            {"name": "MA_Slow", "shortName": f"MA{p['slow']}", "pane": "separate", "paneId": "ma",
              "color": "#42a5f5", "values": series_to_list(ma_slow, n)},
         ]
         return entries.fillna(False), exits.fillna(False), indicators
