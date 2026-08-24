@@ -50,13 +50,14 @@ class Strategy:
             else:
                 warnings.warn(f"策略 {self.name} 无参数 '{k}'，已忽略", stacklevel=2)
 
-    def run(self, df: pd.DataFrame) -> tuple[pd.Series, pd.Series, list[dict[str, Any]]]:
+    def run(self, df: pd.DataFrame) -> tuple[pd.Series, pd.Series, list[dict[str, Any]]] | tuple[pd.Series, pd.Series, list[dict[str, Any]], pd.Series]:
         """计算策略信号与指标
 
         Args:
             df: K线数据, 含 open/high/low/close/volume 列, 每行代表一个交易日
 
         Returns:
+            (entries, exits, indicators)  或  (entries, exits, indicators, size)
             entries: 布尔 Series (与 df 等长), True 表示该日触发买入信号
             exits:   布尔 Series (与 df 等长), True 表示该日触发平仓信号
             indicators: 指标列表, 每项是一条可视化曲线, 结构如下:
@@ -71,6 +72,9 @@ class Strategy:
                     "type": str,            # 可选: "line"(折线) / "bar"(柱状), 默认 line
                     "values": list[float|None],  # 与 df 等长的数值序列, NaN 用 None
                 }
+            size:     [可选] 布尔 Series 或 float Series, 每笔买入的仓位比例(0~1)。
+                      - None 或省略 → 引擎等权满仓 (老策略默认)
+                      - 与 entries 等长的 Series → 仅在 entry 当日读取该值作为仓位
         """
         raise NotImplementedError
 

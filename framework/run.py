@@ -114,17 +114,24 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: 
         param_overrides = {}
     # 1. 准备数据 (复用现有 fetcher, 带本地缓存)
     df = fetch_stock_history(symbol, start_date, end_date).copy()
-    df = df[["open", "high", "low", "close", "volume"]].dropna()
+    # 透传完整行情列 (含 symbol/成交额/换手率), 复合策略(中期)需要;
+    # 原5列策略忽略多余列, 不受影响。
+    keep = ["open", "high", "low", "close", "volume", "amount", "turnover_rate", "symbol"]
+    keep = [c for c in keep if c in df.columns]
+    df = df[keep].dropna()
 
     # 2. 计算策略信号 (向量化, 一次性算完)
     strategy = STRATS[strategy_key](**param_overrides)
-    entries, exits, indicators = strategy.run(df)
+    result = strategy.run(df)
+    entries, exits, indicators = result[0], result[1], result[2]
+    size = result[3] if len(result) > 3 else None
 
     # 3. 向量化回测: A股成本模型 (佣金+印花税+滑点), 初始资金10万, 满仓做多
     pf = vbt.Portfolio.from_signals(
         close=df["close"],
         entries=entries,
         exits=exits,
+        size=size,
         direction="longonly",
         init_cash=100000.0,
         fees=COST_FEES,
