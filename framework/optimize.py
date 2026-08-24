@@ -33,6 +33,15 @@ PARAM_GRIDS = {
     "obv":     {"ma_period": [10, 15, 20, 30]},
     "regime":  {"trend_threshold": [20, 25, 30], "range_threshold": [15, 20, 25]},
     "turtle":  {"entry": [10, 15, 20, 30], "exit": [5, 10, 15, 20]},
+    "midterm": {
+        "ma_period": [10, 20, 30],
+        "vol_min": [1.0, 1.2, 1.5],
+        "vol_lookback": [3, 5],
+        "mult_weak": [1.5, 2.0, 2.5],
+        "mult_strong": [3.0, 3.5],
+        "no_weekly": [False, True],
+        "no_vol": [False, True],
+    },
 }
 
 TRAIN_RATIO = 0.7  # 70% 训练集, 30% 测试集
@@ -41,7 +50,9 @@ TRAIN_RATIO = 0.7  # 70% 训练集, 30% 测试集
 def _quick_backtest(df, strategy_key, params):
     """快速回测, 返回 (收益率%, 夏普, 最大回撤%, 交易次数)"""
     strategy = STRATS[strategy_key](**params)
-    entries, exits, _ = strategy.run(df)
+    result = strategy.run(df)
+    # 兼容不同策略返回值数量 (3~5个)
+    entries, exits = result[0], result[1]
     pf = vbt.Portfolio.from_signals(
         close=df["close"],
         entries=entries,
@@ -58,10 +69,10 @@ def _quick_backtest(df, strategy_key, params):
     return total_return, sharpe, max_dd, n_trades
 
 
-def optimize(strategy_key, symbol):
+def optimize(strategy_key, symbol, start="20250101", end="20260818"):
     """网格搜索 + 样本外验证"""
     # 1. 获取数据
-    df = fetch_stock_history(symbol, "20260101", "20260818").copy()
+    df = fetch_stock_history(symbol, start, end).copy()
     df = df[["open", "high", "low", "close", "volume"]].dropna()
 
     # 2. 训练/测试拆分 (时间序列, 不能随机打乱)

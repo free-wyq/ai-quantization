@@ -115,10 +115,14 @@ class MidTermStrategy(Strategy):
     params = {
         "vol_min": 1.2, "vol_lookback": 5,
         "atr": 14, "adx": 14,
-        "mult_strong": 3.5, "mult_weak": 2.0, "adx_thresh": 30.0,
+"mult_strong": 3.5, "mult_weak": 2.0, "adx_thresh": 30.0,
+    "use_f15": False,
+    "profit_tighten": None,
+    "max_retracement": 0.10,
         "top_n": 3,
         "temp_th": 50.0, "breadth_th": 60.0,
         "no_weekly": False, "no_ma60": False, "no_vol": False,
+    "ma_period": 20,
         # 跨股票过滤层开关 (默认全关, 逐个开启观察效果)
         "use_sector_strong": False,
         "use_leader": False,
@@ -175,6 +179,7 @@ class MidTermStrategy(Strategy):
             use_vol=not p["no_vol"],
             vol_min=p["vol_min"],
             vol_lookback=p["vol_lookback"],
+            ma_period=p["ma_period"],
         )
 
         # --- 组合: 逐层叠加过滤 ---
@@ -192,7 +197,9 @@ class MidTermStrategy(Strategy):
             df, entries,
             atr_period=p["atr"], adx_period=p["adx"],
             mult_strong=p["mult_strong"], mult_weak=p["mult_weak"],
-            adx_thresh=p["adx_thresh"],
+            adx_thresh=p["adx_thresh"], use_f15=p["use_f15"],
+            profit_tighten=p.get("profit_tighten"),
+            max_retracement=p.get("max_retracement"),
         )
 
         # --- 可视化指标 ---

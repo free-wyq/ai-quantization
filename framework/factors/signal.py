@@ -72,16 +72,17 @@ def volume_ratio(df: pd.DataFrame, window: int = 20, min_ratio: float = 1.2, loo
 
 
 def build_entries(df: pd.DataFrame, use_weekly_kdj: bool = True, use_ma60: bool = True,
-                 use_vol: bool = True, vol_min: float = 1.2, vol_lookback: int = 5):
-    """综合个股入场信号 = MACD多头 & 周KDJ多头 & MA60向上 & 量比放大(近N日)。
+                 use_vol: bool = True, vol_min: float = 1.2, vol_lookback: int = 5,
+                 ma_period: int = 20):
+    """综合个股入场信号 = MACD多头 & 周KDJ多头 & MA向上 & 量比放大(近N日)。
 
     所有条件均为持续状态(非单日事件), 避免多条件同日共振过严。
     MACD多头从金叉持续到死叉; 量比用lookback窗口放宽;
-    周KDJ/MA60本身就是持续状态。
+    周KDJ/MA本身就是持续状态。
     """
     macd_bull, _, _ = macd(df)
     weekly_long, _, _ = weekly_kdj(df)
-    ma60_up, _ = ma_trend(df, 60)
+    ma60_up, _ = ma_trend(df, ma_period)
     vol_ok, _ = volume_ratio(df, min_ratio=vol_min, lookback=vol_lookback)
 
     entries = macd_bull.copy()
