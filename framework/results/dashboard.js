@@ -80,6 +80,7 @@ klinecharts.registerIndicator({
 // 成交量柱指标 (绑 vol_pane 默认右轴, volume 量纲几亿级)
 // v10 关键: bar figure 带 baseValue:0 + styles 函数按 close/open 涨跌着色
 // 内置 VOL 的 figure key 固定为 "volume", calc 返回 {volume, open, close} 让 styles 判涨跌
+// 叠加 MA5 成交量均线 (同 vol_pane 右轴, 与柱同量纲)
 let _vrValues = [];
 klinecharts.registerIndicator({
   name: 'VOL_1',
@@ -100,11 +101,21 @@ klinecharts.registerIndicator({
         if (n && n.close > n.open) color = get('upColor', ds.bars[0].upColor);
         else if (n && n.close < n.open) color = get('downColor', ds.bars[0].downColor);
         return { color };
-      } }
+      } },
+    { key: 'vma5', title: 'MA5: ', type: 'line' }
   ],
-  calc: dataList => dataList.map((d) => ({
-    volume: d.volume || 0, open: d.open, close: d.close
-  }))
+  calc: dataList => {
+    const vols = dataList.map(d => d.volume || 0);
+    const ma = (p, i) => {
+      if (i < p - 1) return null;
+      let s = 0; for (let j = i - p + 1; j <= i; j++) s += vols[j];
+      return s / p;
+    };
+    return dataList.map((d, i) => ({
+      volume: d.volume || 0, open: d.open, close: d.close,
+      vma5: ma(5, i)
+    }));
+  }
 });
 
 // 量比线指标 (绑 vol_pane 第二条左轴, 独立量纲, 1 上下真实值, 不缩放)
@@ -232,7 +243,7 @@ function render(idx){
   const vrInd = (r.indicators || []).find(i => i.name === 'VR');
   _vrValues = vrInd ? vrInd.values : [];
 
-  // 自定义 VOL_1: 成交量柱 (柱子按K线涨跌着色, 绑 vol_pane 默认右轴)
+  // 自定义 VOL_1: 成交量柱 (柱子按K线涨跌着色, 绑 vol_pane 默认右轴) + MA5 成交量均线
   // v10: styles 走 bars[0].upColor/downColor, figure styles 函数会读它们
   chart.createIndicator({
     name: 'VOL_1', paneId: 'vol_pane',
@@ -241,7 +252,12 @@ function render(idx){
         upColor: '#ef5350',
         downColor: '#26a69a',
         noChangeColor: '#888888'
-      }]
+      }],
+      // MA5 成交量均线: 浅色实线 (lines[1] 对应第二个 figure vma5)
+      lines: [
+        { color: 'transparent', style: 'solid', size: 0 },
+        { color: '#faad14', style: 'solid', size: 1 }
+      ]
     }
   });
 
