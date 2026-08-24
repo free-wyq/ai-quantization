@@ -140,7 +140,7 @@ class Strategy:
         """量比值序列 = 当日成交量 / 过去 window 日均量。
 
         所有策略共用同一口径: >1 放量, <1 缩量, 1 上下波动。
-        window 默认 20 (与 framework/factors/signal.py 的 volume_ratio 默认一致)。
+        window 默认 20 (volume_ratio 计算口径, 与 midterm._volume_ratio 一致)。
         """
         vol = df["volume"].astype(float)
         return vol / vol.rolling(window).mean()

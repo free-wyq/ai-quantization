@@ -31,9 +31,7 @@ ai-Quantification/
 │       ├── dashboard.css
 │       └── klinecharts.min.js
 ├── tests/                 # pytest (conftest 构造模拟K线, 不依赖网络)
-├── EXPERIENCE.md          # 9策略×30股×5年回测实战经验 (历史经验事实来源)
-├── STRATEGY_GUIDE.md      # 策略设计理论 (信号分级/Kelly/ATR止损/七层架构)
-├── ROADMAP.md             # 演进路线
+├── DESIGN.md              # 设计文档 (经验档案 + 策略理论 + 演进路线)
 ├── CLAUDE.md              # Claude Code 指引
 └── requirements.txt
 ```

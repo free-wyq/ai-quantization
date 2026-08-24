@@ -2,10 +2,7 @@
 
 职责单一: 只生成个股信号 (入场/退出/指标/原因)。
 跨股票筛选(闸门/板块/龙头)和仓位控制由引擎或独立模块负责。
-七层闭环架构见 STRATEGY_GUIDE.md。
-
-信号因子协议见 framework/factors/signal.py (SignalFactor)。
-具体因子实现和买入信号组合逻辑在本策略中定义。
+七层闭环架构见 DESIGN.md 第二部分。
 """
 from __future__ import annotations
 

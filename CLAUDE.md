@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-A股量化交易学习项目:vectorbt 向量化回测 + akshare 行情 + klinecharts 离线看板。单股票回测为核心,演进方向见 `ROADMAP.md`(参数优化 → 风控 → 多股票组合 → 实盘)。
+A股量化交易学习项目:vectorbt 向量化回测 + akshare 行情 + klinecharts 离线看板。单股票回测为核心,演进方向见 `DESIGN.md` 第三部分(参数优化 → 风控 → 多股票组合 → 实盘)。
 
-设计文档:`EXPERIENCE.md`(9策略×30股×5年回测的实战经验总结,策略设计的事实来源)、`STRATEGY_GUIDE.md`(信号分级/Kelly/ATR止损/七层闭环架构的理论)。
+设计文档:`DESIGN.md` 三合一(第一部分经验档案 — 9策略×30股×5年回测结论;第二部分策略理论 — 信号分级/Kelly/ATR止损/七层闭环架构;第三部分演进路线)。
 
 ## 常用命令
 
@@ -66,7 +66,7 @@ framework/batch_backtest.py  30股批量回测
 
 ### A股成本模型(三处必须一致)
 
-`COST_FEES=0.0008`(佣金万3+印花税千1,买卖平均)+ `COST_SLIPPAGE=0.001`(0.1%)。在 `run.py`、`batch_backtest.py`、`optimize.py` 各硬编码一份。**改成本必须三处同改**,目前是复制粘贴的重复,未抽公共(见 `ROADMAP.md` 技术债务)。
+`COST_FEES=0.0008`(佣金万3+印花税千1,买卖平均)+ `COST_SLIPPAGE=0.001`(0.1%)。在 `run.py`、`batch_backtest.py`、`optimize.py` 各硬编码一份。**改成本必须三处同改**,目前是复制粘贴的重复,未抽公共(见 `DESIGN.md` 技术债务)。
 
 ### 看板数据流(不可改 dashboard.html 的约定)
 
@@ -79,9 +79,8 @@ framework/batch_backtest.py  30股批量回测
 
 ### 中期复合策略(midterm) + 因子库
 
-`framework/strategies/midterm.py` 是当前唯一内置策略,七层闭环架构见 `STRATEGY_GUIDE.md`。它依赖 `framework/factors/` 因子库(纯函数:输入日K,输出等长对齐 Series):
+`framework/strategies/midterm.py` 是当前唯一内置策略,七层闭环架构见 `DESIGN.md` 第二部分。它依赖 `framework/factors/` 因子库(纯函数:输入日K,输出等长对齐 Series):
 
-- `factors/signal.py` — MACD / 周KDJ / 量比 / MA / `build_entries`
 - `factors/exit.py` — ATR跟踪止损 / 量价背离 / ADX / `build_exits`
 
 midterm 的 `generate(df)` 组装个股信号层(第3层信号 + 第5层退出 + 可视化指标 + 买卖原因);跨股票过滤层(第0层闸门 `market_state.py` / 第1层板块 `sector_trend.py` / 第2层龙头 `leader.py`)的因子库**已建好但暂未接入**(midterm params 默认 `use_sector_strong/use_leader/use_gate` 全关),逐个开启观察效果。跨股票状态原本在 midterm 模块级缓存 `_STATE`(按区间+阈值 key),精简后已随跨股票层关闭而移除;开启时需重新引入缓存避免每只股票重算全市场。依赖 `data/sectors.py`(申万板块映射 + `sector_mapping.csv`/`stock_list.csv`)。
