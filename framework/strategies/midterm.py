@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from framework.strategies.base import Strategy, series_to_list, SignalResult
-from framework.factors.exit import build_exits, atr, adx, volume_divergence_exits
+from framework.factors.exit import build_exits, adx, volume_divergence_exits
 
 
 # ---- 因子计算 (本策略专用) ----
@@ -78,23 +78,26 @@ class MidTermStrategy(Strategy):
         # 信号
         "vol_min": 1.2, "vol_lookback": 5, "ma_period": 20,
         "no_weekly": False, "no_ma60": False, "no_vol": False,
+        "no_adx": False, "adx_entry_min": 20.0,
         # 退出
         "atr": 14, "adx": 14,
         "mult_strong": 3.5, "mult_weak": 2.0, "adx_thresh": 30.0,
         "use_f15": False, "profit_tighten": None, "max_retracement": 0.10,
-        "use_ma_stop": True, "ma_stop_period": 20,
+        "use_ma_stop": False, "ma_stop_period": 20,
     }
 
     def generate(self, df: pd.DataFrame) -> SignalResult:
         n = len(df)
         p = self.params
 
-        # --- 入场信号: MACD多头 & 周KDJ多头 & MA向上 & 量比放大 ---
+        # --- 因子计算 (只算一次) ---
         macd_bull, _, _ = _macd(df)
         wk_long, _, _ = _weekly_kdj(df)
         ma_up, _ = _ma_trend(df, p["ma_period"])
         vol_ok, _ = _volume_ratio(df, min_ratio=p["vol_min"], lookback=p["vol_lookback"])
+        adx_s, _, _ = adx(df, p["adx"])
 
+        # --- 入场信号: MACD多头 & 周KDJ多头 & MA向上 & 量比放大 & ADX趋势强 ---
         entries = macd_bull.copy()
         if not p["no_weekly"]:
             entries = entries & wk_long
@@ -102,6 +105,8 @@ class MidTermStrategy(Strategy):
             entries = entries & ma_up
         if not p["no_vol"]:
             entries = entries & vol_ok
+        if not p["no_adx"]:
+            entries = entries & (adx_s >= p["adx_entry_min"])
         entries = entries.fillna(False)
 
         # --- 退出 ---
@@ -117,35 +122,33 @@ class MidTermStrategy(Strategy):
         )
 
         # --- 可视化指标 ---
-        _, dif, dea = _macd(df)
+        # MACD/DIF/DEA/ADX 用 klinecharts 内置指标库渲染 (前端 createIndicator name='MACD'/'DMI'),
+        # 此处只保留策略专属的 ATR止损线 (自定义 STRAT_* 指标)。
         _ind_specs = [
-            ("ATRstop", "ATR止损", "main", "main", "#fa8c16", "dashed", stop_line),
-            ("DIF", "DIF", "separate", "strat", "#ffa940", "solid", dif),
-            ("DEA", "DEA", "separate", "strat", "#42a5f5", "solid", dea),
+            ("ATRstop", "ATR止损", "main", "main", "#fa8c16", "dashed", "line", stop_line),
         ]
         indicators = [
             {"name": nm, "shortName": sn, "pane": pn, "paneId": pid,
-             "color": cl, "lineStyle": ls, "values": series_to_list(val, n)}
-            for nm, sn, pn, pid, cl, ls, val in _ind_specs
+             "color": cl, "lineStyle": ls, "type": tp, "values": series_to_list(val, n)}
+            for nm, sn, pn, pid, cl, ls, tp, val in _ind_specs
         ]
 
         # --- 买卖原因 ---
-        reasons = self._build_reasons(df, entries, exits, stop_line, p)
+        reasons = self._build_reasons(df, entries, exits, stop_line, p, macd_bull, wk_long, ma_up, vol_ok, adx_s)
 
         return SignalResult(entries, exits.fillna(False), indicators, reasons)
 
-    def _build_reasons(self, df, entries, exits, stop_line, p):
+    def _build_reasons(self, df, entries, exits, stop_line, p,
+                       macd_bull, wk_long, ma_up, vol_ok, adx_s):
         """为每个买入/卖出日期生成原因说明。"""
         close = df["close"].astype(float)
-        macd_bull, _, _ = _macd(df)
-        wk_long, _, _ = _weekly_kdj(df)
-        ma60_up, _ = _ma_trend(df, p["ma_period"])
-        vol_ok, _ = _volume_ratio(df, min_ratio=p["vol_min"], lookback=p["vol_lookback"])
 
         buy_flags = [
             (macd_bull, "MACD多头"), (wk_long, "周KDJ多头"),
-            (ma60_up, "MA向上"), (vol_ok, "量比放大"),
+            (ma_up, "MA向上"), (vol_ok, "量比放大"),
         ]
+        if not p["no_adx"]:
+            buy_flags.append((adx_s >= p["adx_entry_min"], "ADX趋势强"))
 
         buy_reasons = {}
         for idx in entries[entries].index:
@@ -155,11 +158,12 @@ class MidTermStrategy(Strategy):
 
         sell_reasons = {}
         f15_exit = volume_divergence_exits(df, entries) if p["use_f15"] else pd.Series(False, index=df.index)
+        use_ma_stop = p.get("use_ma_stop", False)
         for idx in exits[exits].index:
             parts = []
             sl = stop_line.loc[idx] if idx in stop_line.index else np.nan
             if not np.isnan(sl) and close.loc[idx] < sl:
-                parts.append("ATR跟踪止损")
+                parts.append("MA止损" if use_ma_stop else "ATR跟踪止损")
             if p["use_f15"] and f15_exit.loc[idx]:
                 parts.append("量价背离")
             ts = int(pd.Timestamp(idx).timestamp() * 1000)

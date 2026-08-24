@@ -193,6 +193,9 @@ function render(idx){
   chart.removeIndicator({ name: 'VOL_1' });
   chart.removeIndicator({ name: 'VR_LINE' });
   chart.removeIndicator({ name: 'EQUITY' });
+  // 内置指标: MACD/DIF/DEA + ADX(DMI), 每次切换 run 先清掉再重建
+  chart.removeIndicator({ name: 'MACD' });
+  chart.removeIndicator({ name: 'DMI' });
 
   // v10: setSymbol + setPeriod + setDataLoader 三者就绪后触发 getBars
   chart.setSymbol({ ticker: r.symbol });
@@ -209,13 +212,14 @@ function render(idx){
         const fitBars = Math.floor(w / barSpace);
         chart.scrollToDataIndex(Math.min(r.candles.length - 1, fitBars - SCROLL_OFFSET));
 
-        // 四层布局: 主图45% | 成交量+量比22% | 策略18% | 权益15%
+        // 五层布局: 主图43% | 量+量比21% | MACD17% | ADX12% | 权益7%
         const totalH = chartEl.clientHeight;
         const layout = [
-          { id: 'candle_pane', height: Math.floor(totalH * 0.45) },
-          { id: 'vol_pane',    height: Math.floor(totalH * 0.22) },
-          { id: 'strat_strat', height: Math.floor(totalH * 0.18) },
-          { id: 'equity_pane', height: Math.floor(totalH * 0.15) },
+          { id: 'candle_pane', height: Math.floor(totalH * 0.43) },
+          { id: 'vol_pane',    height: Math.floor(totalH * 0.21) },
+          { id: 'strat_strat', height: Math.floor(totalH * 0.17) },
+          { id: 'strat_adx',   height: Math.floor(totalH * 0.12) },
+          { id: 'equity_pane', height: Math.floor(totalH * 0.07) },
         ];
         layout.forEach(l => {
           try { chart.setPaneOptions({ id: l.id, height: l.height }); } catch(e) {}
@@ -259,8 +263,13 @@ function render(idx){
     styles: { lines: [{ color: '#52c41a', style: 'solid', size: 1.2 }] }
   }, true);
 
-  // 策略曲线 (MA均线/MACD等, 由策略函数动态提供)
+  // 策略曲线 (ATR止损线等策略专属, 由策略函数动态提供; MA均线由基类注入)
   renderStrategyIndicators(r);
+
+  // 内置技术指标: MACD (含 DIF/DEA/柱) + DMI (含 ADX), 前端从K线自算, 与策略参数一致
+  // MACD 默认 12/26/9; DMI 默认 14 (ADX 周期)
+  chart.createIndicator({ name: 'MACD', paneId: 'strat_strat' });
+  chart.createIndicator({ name: 'DMI',  paneId: 'strat_adx' });
 
   // 权益曲线 (放在所有副图最下方, 紧邻策略收益)
   equityData = r.equity || [];
