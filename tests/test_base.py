@@ -81,14 +81,6 @@ class TestTemplateMethod:
         assert "MA5" in names and "MA10" in names
         assert "MA20" in names and "MA60" in names
 
-    def test_run_injects_vr(self, sample_df):
-        """基类自动注入量比 (name='VR' 看板双Y轴契约)"""
-        s = self._stub_strategy()
-        _, _, indicators, _, _ = s.run(sample_df)
-        vr = [i for i in indicators if i["name"] == "VR"]
-        assert len(vr) == 1, "应有且仅有一条 VR 量比指标"
-        assert vr[0]["paneId"] == "vol"
-
     def test_run_preserves_special_indicators(self, sample_df):
         """子类特色指标保留在 indicators 中"""
         s = self._stub_strategy()

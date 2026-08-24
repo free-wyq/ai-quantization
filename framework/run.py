@@ -135,7 +135,7 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: 
             reasons = item
             break
 
-    # 2.1 量比(VR) 等公共指标现由基类 Strategy.run() 统一组装 (name='VR' 看板双Y轴契约)。
+    # 2.1 主图均线系统 (MA5/10/20/60) 由基类 Strategy.run() 统一组装, 子类只加特色指标。
 
     # 3. 向量化回测: A股成本模型 (佣金+印花税+滑点), 初始资金10万, 满仓做多
     pf = vbt.Portfolio.from_signals(

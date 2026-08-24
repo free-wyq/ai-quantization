@@ -222,7 +222,7 @@ ADX策略5年回撤只有19%，所有策略中最低
 ## 六、代码级Bug和隐患（历史档案）
 
 > 9 策略时期的代码问题，已通过"删冗余策略 + 基类模板方法重构"解决——只保留 midterm，
-> 公共指标(MA系统/量比)上提到 `Strategy` 基类，ATR/ADX 统一到 `framework/factors/exit.py`。
+> 公共指标(MA系统)上提到 `Strategy` 基类，ATR/ADX 统一到 `framework/factors/exit.py`。
 > 下表保留作历史档案。仅 #6/#9 两项仍待办。
 
 | # | 问题 | 历史文件 | 现状 |
@@ -237,7 +237,7 @@ ADX策略5年回撤只有19%，所有策略中最低
 | 8 | Turtle进出场用同一周期(20/20) | `turtle.py` | 已删 |
 | 9 | 成本模型不精确（无最小手续费、无过户费区分） | `run.py` | 待办 |
 
-**框架级缺失（部分已补）**：✓ 看板可视化 + 信号分级理论 + 成交量确认(基类VR+量比过滤)；✗ 仓位管理（理论已定，未接入 midterm）/ 分年度统计 / 组合回测 / 并行执行 / 指数ETF数据。
+**框架级缺失（部分已补）**：✓ 看板可视化 + 信号分级理论 + 成交量确认(midterm 量比过滤)；✗ 仓位管理（理论已定，未接入 midterm）/ 分年度统计 / 组合回测 / 并行执行 / 指数ETF数据。
 
 ---
 
@@ -246,7 +246,7 @@ ADX策略5年回撤只有19%，所有策略中最低
 > 9 策略时期的优化清单，大部分已通过"删冗余策略 + 收敛到 midterm"解决。
 
 - **紧急修bug(①-⑤)**：①日期硬编码→已修；②④⑤ kdj/regime/trend_rider 网格与死参数→策略已删，只留 midterm grid；③ ATR 重复三份→统一到 `factors/exit.py`。
-- **高收益改进(⑥-⑩)**：⑥ 统一 ATR 退出→midterm 已是统一退出；⑨ ADX 过滤→midterm 第4层用 ADX 定止损宽度；⑩ 量比确认→已落地(量比>1.2入场过滤+基类VR)；⑦⑧ 策略已删。
+- **高收益改进(⑥-⑩)**：⑥ 统一 ATR 退出→midterm 已是统一退出；⑨ ADX 过滤→midterm 第4层用 ADX 定止损宽度；⑩ 量比确认→已落地(midterm._volume_ratio 量比>1.2 入场过滤)；⑦⑧ 策略已删。
 - **框架升级(⑪-⑭)**：⑪ 仓位管理→理论已定(Kelly×ADX+分级)，**midterm 尚未接入**；⑫分年度统计/⑬并行/⑭指数ETF→待办（见本文第三部分）。
 
 ---
@@ -378,7 +378,7 @@ ADX策略5年回撤只有19%，所有策略中最低
 - **七层闭环**：闸门(情绪/板块温度) → 板块 → 龙头 → 信号(周KDJ+MACD+MA+量比) → 环境(ADX+ATR定止损宽度) → 退出(ATR跟踪/量价背离) → 仓位(Kelly×ADX系数)。详见第二部分。
 - **当前接入状态**：个股信号层(第3层) + 退出(第5层) 已在 `midterm.generate()` 实现（信号因子 `_macd/_weekly_kdj/_ma_trend/_volume_ratio` 内联在 midterm.py）；跨股票过滤层(闸门/板块/龙头)的因子库已建(`framework/factors/market_state.py`/`sector_trend.py`/`leader.py`)，**默认全关**，逐个开启观察效果。**仓位层(第6层) Kelly 理论已定但尚未接入**——`generate()` 不返回 size，回测走等权满仓。
 - **因子库**：纯函数（日K进，等长对齐 Series 出），见 `framework/factors/`。
-- **代码重构史**：基类模板方法（`run()` 骨架 + 子类 `generate()` 钩子 + `SignalResult`，公共指标 MA系统/量比由基类统一组装）→ 信号因子从 `factors/signal.py` 内联进 midterm.py（signal.py 已清空）。详见 git log。
+- **代码重构史**：基类模板方法（`run()` 骨架 + 子类 `generate()` 钩子 + `SignalResult`，公共指标 MA系统由基类统一组装）→ 信号因子从 `factors/signal.py` 内联进 midterm.py（signal.py 已清空）。详见 git log。
 
 ### 验证状态
 
@@ -668,7 +668,7 @@ f* = (p × b - q) / b
 - [x] 策略框架：插件式自动发现 + 基类模板方法 (`run` 骨架 + `generate` 钩子)
 - [x] 回测引擎：vectorbt 向量化回测，速度快
 - [x] 绩效指标：夏普 / 最大回撤 / 胜率 / 盈亏比
-- [x] 可视化看板：klinecharts + 买卖标注 + 成交量/量比双 Y 轴 + 多副图指标
+- [x] 可视化看板：klinecharts + 买卖标注 + 成交量(含MA均线) + 多副图指标
 - [x] 数据层：akshare + 本地缓存 + 申万行业指数
 - [x] 中期复合策略 midterm：周KDJ + MACD + MA + 量比 共振入场，ATR跟踪止损退出
 - [x] 参数优化：网格搜索 + train/test 拆分样本外验证

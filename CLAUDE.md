@@ -52,7 +52,7 @@ framework/batch_backtest.py  30股批量回测
 
 `framework/strategies/base.py` 的 `Strategy.run(df)` 是**模板骨架**(子类一般不重写):组装公共指标 → 调子类 `generate(df)` 钩子 → 返回固定 5 元组。
 
-- **公共指标上提到基类**:主图均线系统(`MA_LINES = [(5,#faad14),(10,#13c2c2),(20,#722ed1),(60,#f5222d)]`,子类可覆盖类属性自定义) + 量比 VR(`name='VR'` 是与 `dashboard.js` 的显式契约,vol_pane 双 Y 轴左轴靠 `find(name==='VR')` 渲染)。子类的 `generate()` 返回的 `indicators` **只放特色指标**(如 midterm 的 ATRstop/DIF/DEA),不含 MA/VR。
+- **公共指标上提到基类**:主图均线系统(`MA_LINES = [(5,#faad14),(10,#13c2c2),(20,#722ed1),(60,#f5222d)]`,子类可覆盖类属性自定义)。子类的 `generate()` 返回的 `indicators` **只放特色指标**(如 midterm 的 ATRstop),不含 MA。看板成交量面板用内置 `VOL` 指标(柱+MA5/MA10),量比仅作入场过滤(`midterm._volume_ratio`),不再单独渲染量比线。
 - **`SignalResult` dataclass**:`generate()` 的命名返回(entries/exits/indicators/reasons/size),替代脆弱的可变元组。
 - 新策略:继承 `Strategy`,设 `name`/`label`/`params`,实现 `generate(df)`,返回 `SignalResult`;indicator values 用 `series_to_list()` 转(`.fillna(False)` 必须做,vectorbt 不吃 NaN)。
 

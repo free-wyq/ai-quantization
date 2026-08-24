@@ -20,7 +20,7 @@ ai-Quantification/
 │   │   ├── base.py        # 策略基类 (模板方法: run 骨架 + generate 钩子)
 │   │   └── midterm.py     # 中期复合策略 (信号 + 退出)
 │   ├── factors/           # 因子库 (纯函数: 日K 进, 等长对齐 Series 出)
-│   │   ├── signal.py      # MACD / 周KDJ / MA / 量比 / build_entries
+│   │   ├── signal.py      # (已清空, 信号因子内联进 midterm.py)
 │   │   ├── exit.py        # ATR跟踪止损 / 量价背离 / ADX / build_exits
 │   │   ├── market_state.py# 个股广度 / 板块温度 / 情绪 (库内备用, 暂未接入)
 │   │   ├── sector_trend.py# 板块趋势 (库内备用, 暂未接入)
@@ -71,7 +71,7 @@ python framework/server_dashboard.py
 # 浏览器打开 http://localhost:8000/framework/results/dashboard.html
 ```
 
-看板展示 K 线 + MA 均线 + 买卖标注 + 成交量/量比双 Y 轴 + 权益曲线 + 策略指标，
+看板展示 K 线 + MA 均线 + 买卖标注 + 成交量(含MA5/MA10均线) + 权益曲线 + 策略指标，
 支持十字光标联动。每次回测往 `framework/results/runs/` 写独立 JSON，刷新页面即重新扫描，
 **不重新生成 HTML** (`file://` 打开无效，必须走 `server_dashboard.py`)。
 
@@ -93,7 +93,7 @@ class MyStrategy(Strategy):
         ma = close.rolling(self.params["period"]).mean()
         entries = close > ma
         exits = close < ma
-        # 特色指标只放策略自己的; MA系统 + 量比(VR) 由基类 run() 统一组装
+        # 特色指标只放策略自己的; MA系统由基类 run() 统一组装
         indicators = [
             {"name": "MA20", "shortName": "MA20", "pane": "main", "paneId": "main",
              "color": "#ffa940", "values": series_to_list(ma, len(df))},
@@ -102,7 +102,7 @@ class MyStrategy(Strategy):
 ```
 
 框架自动发现 (无需改任何框架代码)。基类 `run()` 是模板骨架，自动注入公共指标
-(MA5/10/20/60 主图均线 + 量比 VR 副图) 并调子类 `generate()`，返回固定 5 元组
+(MA5/10/20/60 主图均线) 并调子类 `generate()`，返回固定 5 元组
 `(entries, exits, indicators, size, reasons)` 供回测引擎消费。
 
 ## 策略一览

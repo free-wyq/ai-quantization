@@ -79,21 +79,6 @@ klinecharts.registerIndicator({
 
 // 成交量面板用 klinecharts 内置 VOL 指标 (柱按涨跌着色 + MA5/MA10 成交量均线),
 // 不再手写 registerIndicator。配色跟随 setStyles.indicator.bars (涨红跌绿)。
-let _vrValues = [];
-
-// 量比线指标 (绑 vol_pane 第二条左轴, 独立量纲, 1 上下真实值, 不缩放)
-// 双 Y 机制: 同一 pane 两条 Y 轴 — 右轴成交量柱(几亿), 左轴量比线(1上下)
-// 量比 = 当日成交量 / 过去N日平均成交量, >1 放量 <1 缩量
-klinecharts.registerIndicator({
-  name: 'VR_LINE',
-  shortName: '量比',
-  series: 'normal',
-  precision: 2,
-  figures: [{ key: 'vr', title: '量比: ', type: 'line' }],
-  calc: dataList => dataList.map((d, i) => ({
-    vr: (i < _vrValues.length && _vrValues[i] != null) ? _vrValues[i] : null
-  }))
-});
 
 // 策略曲线: 按 paneId 分组, 同 pane 的多条线合并为一个指标的多 figures
 let registeredStratInds = [];
@@ -103,12 +88,9 @@ function renderStrategyIndicators(r) {
   registeredStratInds = [];
   if (!r.indicators || !r.indicators.length) return;
 
-  // 过滤掉 VR (已单独渲染到 vr_pane)
-  const filtered = r.indicators.filter(i => i.name !== 'VR');
-
   // 按 paneId 分组 (main 单独处理)
   const groups = {};
-  filtered.forEach(ind => {
+  r.indicators.forEach(ind => {
     const gid = ind.pane === 'main' ? 'candle_pane' : (ind.paneId || ind.name);
     if (!groups[gid]) groups[gid] = [];
     groups[gid].push(ind);
@@ -164,7 +146,6 @@ function render(idx){
   if (!r) return;
 
   chart.removeOverlay();
-  chart.removeIndicator({ name: 'VR_LINE' });
   chart.removeIndicator({ name: 'EQUITY' });
   // 内置指标: VOL(成交量+MA) / MACD / DMI(ADX), 每次切换 run 先清掉再重建
   chart.removeIndicator({ name: 'VOL' });
@@ -202,34 +183,12 @@ function render(idx){
     }
   });
 
-  // 先提取 VR 值供 VR_LINE 指标使用
-  const vrInd = (r.indicators || []).find(i => i.name === 'VR');
-  _vrValues = vrInd ? vrInd.values : [];
-
   // 内置 VOL 指标: 成交量柱 (按涨跌着色) + MA5/MA10 成交量均线, 绑 vol_pane 默认右轴
   // calcParams 控制均线周期, 主题色跟随 setStyles.indicator.bars (涨红跌绿)
   chart.createIndicator({
     name: 'VOL', paneId: 'vol_pane',
     calcParams: [5, 10]
   });
-
-  // 双 Y 机制: 在 vol_pane 再建一条左轴, 专供量比线(1上下独立量纲)
-  // 右轴=成交量柱(几亿), 左轴=量比(1上下), 两条 Y 轴同处一个 pane
-  let vrAxisId = 'vr_axis';
-  try {
-    chart.removeYAxis({ paneId: 'vol_pane', id: vrAxisId });
-  } catch(e) {}
-  try {
-    chart.createYAxis({ paneId: 'vol_pane', id: vrAxisId, position: 'left' });
-  } catch(e) { console.warn('createYAxis:', e); }
-
-  // 量比线指标, 绑定到上面创建的左轴 yAxisId (真实 ~1 值, 不缩放)
-  // v10 关键: createIndicator 第二参 stack=true 才会叠加, 否则默认 falsy 会清空该 pane 已有指标
-  // (源码 addIndicator: e||(this.removeIndicator({paneId:r})) — stack=false 就清 pane)
-  chart.createIndicator({
-    name: 'VR_LINE', paneId: 'vol_pane', yAxisId: vrAxisId,
-    styles: { lines: [{ color: '#52c41a', style: 'solid', size: 1.2 }] }
-  }, true);
 
   // 策略曲线 (ATR止损线等策略专属, 由策略函数动态提供; MA均线由基类注入)
   renderStrategyIndicators(r);

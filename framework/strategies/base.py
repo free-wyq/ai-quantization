@@ -4,8 +4,8 @@
   - run(df) 是模板骨架, 子类一般不重写。它组装公共指标 (MA均线系统 + 量比),
     再调子类的 generate(df) 钩子拿信号 + 特色指标 + 原因 + 仓位, 统一返回 5 元组。
   - generate(df) 是子类唯一需实现的钩子, 返回 SignalResult。
-  - 公共指标 (MA系统/量比) 上提到基类, 保证口径一致 + 看板契约 (name='VR' 等);
-    各策略特色指标 (MACD/KDJ 等) 才由子类自行实现。
+  - 公共指标 (MA系统) 上提到基类, 保证口径一致;
+    各策略特色指标 (MACD/KDJ 等) 才由子类自行实现 (现 MACD/ADX 已改用 ta 库 + 看板内置指标)。
 
 三层分离铁律: 策略只算信号, 绝不自己跑回测 (回测在 run.py / batch_backtest.py)。
 """
@@ -96,9 +96,8 @@ class Strategy:
         n = len(df)
         res = self.generate(df)
 
-        # 公共指标: 主图均线系统 + 量比副图 (看板双Y轴左轴契约 name='VR')
+        # 公共指标: 主图均线系统 (MA5/10/20/60 由 base 组装, 特色指标由 generate 返回)
         indicators = self.ma_indicators(df, n)
-        indicators.append(self.vr_indicator(self.compute_volume_ratio(df), n))
         indicators.extend(res.indicators)
 
         return (
@@ -140,20 +139,10 @@ class Strategy:
         """量比值序列 = 当日成交量 / 过去 window 日均量。
 
         所有策略共用同一口径: >1 放量, <1 缩量, 1 上下波动。
-        window 默认 20 (volume_ratio 计算口径, 与 midterm._volume_ratio 一致)。
+        window 默认 20 (与 midterm._volume_ratio 一致)。
         """
         vol = df["volume"].astype(float)
         return vol / vol.rolling(window).mean()
-
-    def vr_indicator(self, ratio: pd.Series, n: int, color: str = "#52c41a") -> dict:
-        """量比指标 dict。
-
-        name 固定为 'VR' —— 这是与 dashboard.js 的显式契约:
-        vol_pane 双 Y 轴左轴通过 find(name==='VR') 提取量比值渲染, name 不符则量比线不显示。
-        ratio 应来自 compute_volume_ratio (或等价计算)。
-        """
-        return {"name": "VR", "shortName": "量比", "pane": "separate", "paneId": "vol",
-                "color": color, "values": series_to_list(ratio, n)}
 
     def reasons_from_signals(self, entries: pd.Series, exits: pd.Series,
                              buy_reason: str, sell_reason: str) -> dict:
