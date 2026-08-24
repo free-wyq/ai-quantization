@@ -45,6 +45,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self._serve_dashboard()
         return super().do_GET()
 
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        super().end_headers()
+
     def _serve_dashboard(self):
         fs_path = self.translate_path(self.path)
         if not os.path.isfile(fs_path):

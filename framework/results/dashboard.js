@@ -78,14 +78,29 @@ klinecharts.registerIndicator({
 });
 
 // 自定义成交量+量比融合指标 (复制内置VOL柱子逻辑 + 量比线按均量缩放)
+// v10 关键: bar figure 必须带 baseValue:0 + styles 函数返回 {color}, 并按 close/open 涨跌着色
+// 内置 VOL 的 figure key 固定为 "volume" (柱子), calc 返回 {volume, open, close} 让 styles 判涨跌
 let _vrValues = [];
 klinecharts.registerIndicator({
   name: 'VOL_1',
   shortName: 'VOL/量比',
   series: 'volume',
   precision: 0,
+  minValue: 0,
   figures: [
-    { key: 'vol', title: '成交量: ', type: 'bar' },
+    { key: 'volume', title: '成交量: ', type: 'bar', baseValue: 0, styles: (ctx) => {
+        const n = ctx.data.current;
+        const ind = ctx.indicator;
+        const ds = ctx.defaultStyles;
+        let color = ds.bars[0].noChangeColor;
+        const get = (p, d) => {
+          const v = (ind.styles && ind.styles.bars && ind.styles.bars[0] && ind.styles.bars[0][p]);
+          return v !== undefined ? v : d;
+        };
+        if (n && n.close > n.open) color = get('upColor', ds.bars[0].upColor);
+        else if (n && n.close < n.open) color = get('downColor', ds.bars[0].downColor);
+        return { color };
+      } },
     { key: 'vr',  title: '量比: ',  type: 'line' },
   ],
   calc: dataList => {
@@ -100,15 +115,11 @@ klinecharts.registerIndicator({
       volMA.push(slice.reduce((a, b) => a + b, 0) / slice.length);
     }
     return dataList.map((d, i) => {
-      const vol = d.volume || null;
-      const up = d.close >= d.open;
+      const vol = d.volume || 0;
       const vrRaw = (i < _vrValues.length && _vrValues[i] != null) ? _vrValues[i] : null;
       const vrScaled = (vrRaw != null && volMA[i] > 0) ? vrRaw * volMA[i] : null;
-      // 柱子按K线涨跌着色: 涨红跌绿
-      return {
-        vol: { value: vol, color: up ? '#ef5350' : '#26a69a' },
-        vr: vrScaled
-      };
+      // v10: bar figure 经 styles 函数按 close/open 判涨跌, 需带上 open/close
+      return { volume: vol, open: d.open, close: d.close, vr: vrScaled };
     });
   }
 });
@@ -220,6 +231,7 @@ function render(idx){
   _vrValues = vrInd ? vrInd.values : [];
 
   // 自定义 VOL_1: 成交量柱 + 量比线融合 (柱子按K线涨跌着色)
+  // v10: styles 走 bars[0].upColor/downColor, figure styles 函数会读它们
   chart.createIndicator({
     name: 'VOL_1', paneId: 'vol_pane',
     styles: {
