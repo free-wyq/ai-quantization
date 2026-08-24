@@ -144,13 +144,6 @@ function render(idx){
   chart.removeIndicator({ name: 'VOL' });
   chart.removeIndicator({ name: 'EQUITY' });
 
-  // 权益曲线 (klinecharts pane, 自动联动十字光标)
-  equityData = r.equity || [];
-  chart.createIndicator({
-    name: 'EQUITY', paneId: 'equity_pane',
-    styles: { lines: [{ color: '#1f77b4', style: 'solid', size: 1.5 }] }
-  });
-
   // v10: setSymbol + setPeriod + setDataLoader 三者就绪后触发 getBars
   chart.setSymbol({ ticker: r.symbol });
   chart.setPeriod({ type: 'day', span: 1 });
@@ -174,6 +167,13 @@ function render(idx){
 
   // 策略曲线 (MA均线/唐奇安通道/MACD等, 由策略函数动态提供)
   renderStrategyIndicators(r);
+
+  // 权益曲线 (放在所有副图最下方, 紧邻策略收益)
+  equityData = r.equity || [];
+  chart.createIndicator({
+    name: 'EQUITY', paneId: 'equity_pane',
+    styles: { lines: [{ color: '#1f77b4', style: 'solid', size: 1.5 }] }
+  });
 
   // 买卖点标注
   r.buys.forEach(p => addAnnotation(p, 'B', '#ff4d4f'));
