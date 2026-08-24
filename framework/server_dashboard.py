@@ -1,7 +1,7 @@
 """一键启动本地看板服务 (动态注入 runs 数据)
 
 用法:
-    python framework/serve_dashboard.py
+    python framework/server_dashboard.py
 浏览器打开: http://localhost:8000/framework/results/dashboard.html
 
 设计要点 (尊重用户"不想动 dashboard.html"的诉求):

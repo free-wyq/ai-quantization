@@ -60,7 +60,7 @@ python framework/run.py --list
 ### 3. 查看看板
 
 ```bash
-python framework/serve_dashboard.py
+python framework/server_dashboard.py
 # 浏览器打开 http://localhost:8080
 ```
 
