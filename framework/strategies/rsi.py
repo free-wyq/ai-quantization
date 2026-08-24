@@ -66,6 +66,8 @@ class RSIStrategy(Strategy):
         entries = (rsi > p["oversold"]) & (rsi.shift(1) <= p["oversold"])
         # 卖出: RSI 从超买区下穿 overbought 线 (回落确认)
         exits = (rsi < p["overbought"]) & (rsi.shift(1) >= p["overbought"])
+        entries = entries.fillna(False)
+        exits = exits.fillna(False)
 
         indicators = [
             {"name": "RSI", "shortName": f"RSI{p['period']}", "pane": "separate", "paneId": "rsi",
@@ -74,5 +76,7 @@ class RSIStrategy(Strategy):
              "color": "#ef5350", "lineStyle": "dashed", "values": [p["overbought"]] * n},
             {"name": "Oversold", "shortName": f"超卖{p['oversold']}", "pane": "separate", "paneId": "rsi",
              "color": "#26a69a", "lineStyle": "dashed", "values": [p["oversold"]] * n},
+            self.vr_indicator(self.compute_volume_ratio(df), n),
         ]
-        return entries.fillna(False), exits.fillna(False), indicators
+        reasons = self.reasons_from_signals(entries, exits, "RSI超卖反弹", "RSI超买回落")
+        return entries, exits, indicators, reasons

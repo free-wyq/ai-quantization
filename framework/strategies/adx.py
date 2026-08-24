@@ -87,6 +87,8 @@ class ADXStrategy(Strategy):
 
         # 补充: ADX 跌破阈值时也平仓（趋势消失）
         exits = exits | (adx < threshold) & (adx.shift(1) >= threshold)
+        entries = entries.fillna(False)
+        exits = exits.fillna(False)
 
         indicators = [
             {"name": "ADX", "shortName": f"ADX{p['period']}", "pane": "separate", "paneId": "adx",
@@ -95,5 +97,10 @@ class ADXStrategy(Strategy):
              "color": "#ef5350", "values": series_to_list(plus_di, n)},
             {"name": "MinusDI", "shortName": "-DI", "pane": "separate", "paneId": "adx",
              "color": "#26a69a", "values": series_to_list(minus_di, n)},
+            {"name": "Threshold", "shortName": f"阈值{threshold}", "pane": "separate", "paneId": "adx",
+             "color": "#888888", "lineStyle": "dashed", "values": [threshold] * n},
+            self.vr_indicator(self.compute_volume_ratio(df), n),
         ]
-        return entries.fillna(False), exits.fillna(False), indicators
+        reasons = self.reasons_from_signals(
+            entries, exits, f"ADX趋势确立(+DI上穿)", "ADX趋势消退/反转")
+        return entries, exits, indicators, reasons

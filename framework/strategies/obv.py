@@ -64,11 +64,15 @@ class OBVStrategy(Strategy):
         # 信号: OBV 上穿均线买入, 下穿均线卖出
         entries = (obv > obv_ma) & (obv.shift(1) <= obv_ma.shift(1))
         exits = (obv < obv_ma) & (obv.shift(1) >= obv_ma.shift(1))
+        entries = entries.fillna(False)
+        exits = exits.fillna(False)
 
         indicators = [
             {"name": "OBV", "shortName": "OBV", "pane": "separate", "paneId": "obv",
              "color": "#ffa940", "values": series_to_list(obv, n)},
             {"name": "OBVMA", "shortName": f"MA{p['ma_period']}", "pane": "separate", "paneId": "obv",
              "color": "#42a5f5", "lineStyle": "dashed", "values": series_to_list(obv_ma, n)},
+            self.vr_indicator(self.compute_volume_ratio(df), n),
         ]
-        return entries.fillna(False), exits.fillna(False), indicators
+        reasons = self.reasons_from_signals(entries, exits, "OBV上穿(量能转强)", "OBV下穿(量能转弱)")
+        return entries, exits, indicators, reasons

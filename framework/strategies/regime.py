@@ -23,6 +23,8 @@
   └─────────────────────┘
 """
 
+import pandas as pd
+
 from .base import Strategy, series_to_list
 from .adx import calc_adx
 from .rsi import calc_rsi
@@ -73,12 +75,14 @@ class RegimeStrategy(Strategy):
         # 震荡→模糊: 震荡被打破, 可能要变盘
         exits = exits | (adx > p["range_threshold"]) & (adx.shift(1) <= p["range_threshold"])
 
-        # ── 6. 指标输出 (降维: MA叠加主图, ADX+RSI合并副图) ──
+        # ── 6. 指标输出 (MA叠加主图, ADX+RSI合并副图) ──
+        entries = entries.fillna(False)
+        exits = exits.fillna(False)
         indicators = [
             # 主图: 双均线叠加在K线上
-            {"name": "MAFast", "shortName": f"MA{p['ma_fast']}", "pane": "separate","paneId": "regime",
+            {"name": "MAFast", "shortName": f"MA{p['ma_fast']}", "pane": "main", "paneId": "main",
              "color": "#ffa940", "values": series_to_list(ma_fast, n)},
-            {"name": "MASlow", "shortName": f"MA{p['ma_slow']}", "pane": "separate","paneId": "regime",
+            {"name": "MASlow", "shortName": f"MA{p['ma_slow']}", "pane": "main", "paneId": "main",
              "color": "#42a5f5", "values": series_to_list(ma_slow, n)},
             # 副图: ADX + RSI 合并 (均为0~100量纲)
             {"name": "ADX", "shortName": f"ADX{p['adx_period']}", "pane": "separate", "paneId": "regime",
@@ -91,5 +95,15 @@ class RegimeStrategy(Strategy):
              "color": "#ef5350", "lineStyle": "dashed", "values": [p["rsi_overbought"]] * n},
             {"name": "Oversold", "shortName": f"超卖{p['rsi_oversold']}", "pane": "separate", "paneId": "regime",
              "color": "#26a69a", "lineStyle": "dashed", "values": [p["rsi_oversold"]] * n},
+            self.vr_indicator(self.compute_volume_ratio(df), n),
         ]
-        return entries.fillna(False), exits.fillna(False), indicators
+        # regime 信号按市场状态路由, 同一信号点原因不同, 按当期状态标注
+        buy_reasons, sell_reasons = {}, {}
+        for idx in entries[entries].index:
+            buy_reasons[int(pd.Timestamp(idx).timestamp() * 1000)] = (
+                "趋势金叉" if is_trending.loc[idx] else "RSI超卖反弹")
+        for idx in exits[exits].index:
+            sell_reasons[int(pd.Timestamp(idx).timestamp() * 1000)] = (
+                "趋势死叉" if is_trending.loc[idx] else "RSI超买回落")
+        reasons = {"buy_reasons": buy_reasons, "sell_reasons": sell_reasons}
+        return entries, exits, indicators, reasons

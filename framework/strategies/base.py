@@ -103,6 +103,20 @@ class Strategy:
         return {"name": "VR", "shortName": "量比", "pane": "separate", "paneId": "vol",
                 "color": color, "values": series_to_list(ratio, n)}
 
+    def reasons_from_signals(self, entries: pd.Series, exits: pd.Series,
+                             buy_reason: str, sell_reason: str) -> dict:
+        """从信号 Series 构建买卖原因 dict (供 _export_result 在看板标注成交原因)。
+
+        策略返回四元组 (entries, exits, indicators, reasons) 即可让看板显示每笔交易的原因。
+        entries/exits 应是最终返回的 Series (经 fillna 等), 时间戳与 vectorbt 成交记录对齐。
+        """
+        buy_reasons, sell_reasons = {}, {}
+        for idx in entries[entries.fillna(False)].index:
+            buy_reasons[int(pd.Timestamp(idx).timestamp() * 1000)] = buy_reason
+        for idx in exits[exits.fillna(False)].index:
+            sell_reasons[int(pd.Timestamp(idx).timestamp() * 1000)] = sell_reason
+        return {"buy_reasons": buy_reasons, "sell_reasons": sell_reasons}
+
 
 def series_to_list(s, n):
     """pandas Series -> list[float|None], NaN 转 None"""

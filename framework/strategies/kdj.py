@@ -169,5 +169,8 @@ class KDJStrategy(Strategy):
              "color": "#ef5350", "lineStyle": "dashed", "values": [p["overbought"]] * n},
             {"name": "Oversold", "shortName": f"超卖{p['oversold']}", "pane": "separate", "paneId": "kdj",
              "color": "#26a69a", "lineStyle": "dashed", "values": [p["oversold"]] * n},
+            self.vr_indicator(self.compute_volume_ratio(df), n),
         ]
-        return entries_series, exits_series, indicators
+        reasons = self.reasons_from_signals(
+            entries_series, exits_series, "KDJ金叉(超卖反转)", "ATR跟踪止损")
+        return entries_series, exits_series, indicators, reasons
