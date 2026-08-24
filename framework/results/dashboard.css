@@ -21,3 +21,4 @@ th { color:#8b93a1; font-weight:500; background:#1c2029; }
 td:first-child, th:first-child { text-align:center; }
 td.pnl-pos { color:#ff4d4f; } td.pnl-neg { color:#00c853; }
 .tag-buy { color:#ff4d4f; font-weight:600; } .tag-sell { color:#00c853; font-weight:600; }
+.trade-reason { color:#888; font-size:12px; max-width:200px; word-break:break-all; }

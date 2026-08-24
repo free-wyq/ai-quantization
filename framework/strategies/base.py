@@ -83,3 +83,15 @@ def series_to_list(s, n):
     """pandas Series -> list[float|None], NaN 转 None"""
     vals = s.values
     return [None if np.isnan(v) else round(float(v), 4) for v in vals[:n]]
+
+
+def signal_persist(signal: pd.Series, lookback: int) -> pd.Series:
+    """信号持续: 近 lookback 日内有过 True 则保持 True。
+
+    用于将单日事件(如放量、金叉)扩展为持续状态,
+    避免多条件同日共振过严 (信号在不同日触发但实际是同一趋势)。
+    lookback=1 时退化为原始行为 (仅当天满足)。
+    """
+    if lookback <= 1:
+        return signal.fillna(False)
+    return signal.rolling(lookback).max().fillna(0).astype(bool)

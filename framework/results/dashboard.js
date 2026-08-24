@@ -53,11 +53,12 @@ chart.setStyles({
 // 买卖点标注 (simpleAnnotation: 虚线+箭头+文字)
 function addAnnotation(point, label, color) {
   try {
+    const text = point.reason ? `${label} ${point.reason}` : label;
     chart.createOverlay({
       name: 'simpleAnnotation',
       lock: true,
       points: [{ timestamp: point.timestamp, value: point.price }],
-      extendData: label,
+      extendData: text,
       styles: { line: { color, style: 'dashed' }, text: { color, size: 13, weight: 'bold' } }
     });
   } catch(e) { console.warn('overlay:', e); }
@@ -198,14 +199,14 @@ function render(idx){
   const trades = [];
   r.buys.forEach((b, i) => {
     const s = r.sells[i];
-    trades.push({type:'买入', date:b.timestamp, price:b.price, pnl:null});
-    if (s) trades.push({type:'卖出', date:s.timestamp, price:s.price, pnl:s.return});
+    trades.push({type:'买入', date:b.timestamp, price:b.price, pnl:null, reason:b.reason||''});
+    if (s) trades.push({type:'卖出', date:s.timestamp, price:s.price, pnl:s.return, reason:s.reason||''});
   });
   tradesBody.innerHTML = trades.map(t => {
     const tagCls = t.type==='买入' ? 'tag-buy' : 'tag-sell';
     const pnlStr = t.pnl===null ? '—' : (t.pnl>=0?'+':'')+fmt(t.pnl)+'%';
     const pnlCls = t.pnl===null ? '' : (t.pnl>=0?'pnl-pos':'pnl-neg');
-    return `<tr><td class="${tagCls}">${t.type}</td><td>${fmtDate(t.date)}</td><td>${fmt(t.price)}</td><td class="${pnlCls}">${pnlStr}</td></tr>`;
+    return `<tr><td class="${tagCls}">${t.type}</td><td>${fmtDate(t.date)}</td><td>${fmt(t.price)}</td><td class="${pnlCls}">${pnlStr}</td><td class="trade-reason">${t.reason}</td></tr>`;
   }).join('');
 }
 

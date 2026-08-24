@@ -28,10 +28,10 @@ from config.settings import DATA_DIR
 from framework.factors.signal import (
     build_entries, macd, volume_ratio, ma_trend, weekly_kdj,
 )
-from framework.factors.exit import build_exits, atr, adx
+from framework.factors.exit import build_exits, atr, adx, volume_divergence_exits
 from framework.factors.market_state import breadth, sector_temperature
 from framework.factors.sector_trend import build_sector_strong_map
-from framework.factors.leader import leader_flags
+from framework.factors.leader import leader_flags, compute_leader_for_stock
 
 # 保险: 单独 import 本模块时也能定位项目根 (data/config 等包)
 _PROJ = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -104,6 +104,7 @@ def _compute_state(start, end, temp_th, breadth_th, top_n):
         "sector_strong_map": sector_strong_map,
         "leader_map": leader_map,
         "mapping": mapping,
+        "pool": pool,
     }
     return _STATE[key]
 
@@ -112,12 +113,17 @@ class MidTermStrategy(Strategy):
     name = "midterm"
     label = "中期量化七层闭环"
     params = {
-        "vol_min": 1.2,
+        "vol_min": 1.2, "vol_lookback": 5,
         "atr": 14, "adx": 14,
         "mult_strong": 3.5, "mult_weak": 2.0, "adx_thresh": 30.0,
         "top_n": 3,
         "temp_th": 50.0, "breadth_th": 60.0,
         "no_weekly": False, "no_ma60": False, "no_vol": False,
+        # 跨股票过滤层开关 (默认全关, 逐个开启观察效果)
+        "use_sector_strong": False,
+        "use_leader": False,
+        "use_gate": False,
+        "use_size": False,
     }
 
     def run(self, df: pd.DataFrame):
@@ -149,6 +155,10 @@ class MidTermStrategy(Strategy):
             sstrong = pd.Series(False, index=df.index)
         if sym and sym in state["leader_map"]:
             lflag = state["leader_map"][sym].reindex(df.index).fillna(False)
+        elif sym and sec_name:
+            # 股票不在池内, 实时计算龙头标记
+            lflag = compute_leader_for_stock(
+                sym, df, state["pool"], mapping, top_n=p["top_n"]).fillna(False)
         else:
             lflag = pd.Series(False, index=df.index)
 
@@ -159,10 +169,18 @@ class MidTermStrategy(Strategy):
             use_ma60=not p["no_ma60"],
             use_vol=not p["no_vol"],
             vol_min=p["vol_min"],
+            vol_lookback=p["vol_lookback"],
         )
 
-        # --- 组合: 龙头 & 板块强势 & 闸门 & 个股信号 ---
-        entries = (base & sstrong & lflag & gate).fillna(False)
+        # --- 组合: 逐层叠加过滤 ---
+        entries = base.copy()
+        if p["use_sector_strong"]:
+            entries = entries & sstrong
+        if p["use_leader"]:
+            entries = entries & lflag
+        if p["use_gate"]:
+            entries = entries & gate
+        entries = entries.fillna(False)
 
         # --- 第5层 退出 ---
         exits, stop_line = build_exits(
@@ -173,9 +191,10 @@ class MidTermStrategy(Strategy):
         )
 
         # --- 可视化指标 ---
-        _, dif, dea = macd(df)
-        ratio = volume_ratio(df, min_ratio=1.0)[1]
-        _, ma60 = ma_trend(df, 60)
+        macd_bull, dif, dea = macd(df)
+        wk_long, _, _ = weekly_kdj(df)
+        ma60_up, ma60 = ma_trend(df, 60)
+        vol_ok, ratio = volume_ratio(df, min_ratio=p["vol_min"], lookback=p["vol_lookback"])
         atr_s = atr(df, p["atr"])
         indicators = [
             {"name": "DIF", "shortName": "DIF", "pane": "separate", "paneId": "macd",
@@ -190,10 +209,52 @@ class MidTermStrategy(Strategy):
              "color": "#fa8c16", "lineStyle": "dashed", "values": series_to_list(stop_line, n)},
         ]
 
+        # --- 买卖原因 ---
+        reasons = self._build_reasons(
+            df, entries, exits, stop_line,
+            macd_bull, wk_long, ma60_up, vol_ok,
+            sstrong, lflag, gate, p)
+
         # ===== 第6层 仓位: 半Kelly × ADX系数 + 信号分级 + 连损冷却 =====
-        adx_s, _, _ = adx(df, p["adx"])
-        size = self._compute_size(df, entries, exits, atr_s, adx_s, p)
-        return entries.fillna(False), exits.fillna(False), indicators, size
+        if p["use_size"]:
+            adx_s, _, _ = adx(df, p["adx"])
+            size = self._compute_size(df, entries, exits, atr_s, adx_s, p)
+            return entries.fillna(False), exits.fillna(False), indicators, size, reasons
+        return entries.fillna(False), exits.fillna(False), indicators, reasons
+
+    def _build_reasons(self, df, entries, exits, stop_line,
+                       macd_bull, wk_long, ma60_up, vol_ok,
+                       sstrong, lflag, gate, p):
+        """为每个买入/卖出日期生成原因说明。"""
+        buy_reasons, sell_reasons = {}, {}
+        close = df["close"].astype(float)
+
+        # 买入原因
+        for idx in entries[entries].index:
+            parts = []
+            if macd_bull.loc[idx]: parts.append("MACD多头")
+            if wk_long.loc[idx]: parts.append("周KDJ多头")
+            if ma60_up.loc[idx]: parts.append("MA60向上")
+            if vol_ok.loc[idx]: parts.append("量比放大")
+            if p.get("use_sector_strong") and sstrong.loc[idx]: parts.append("板块强势")
+            if p.get("use_leader") and lflag.loc[idx]: parts.append("龙头")
+            if p.get("use_gate") and gate.loc[idx]: parts.append("市场闸门")
+            ts = int(pd.Timestamp(idx).timestamp() * 1000)
+            buy_reasons[ts] = " | ".join(parts) if parts else "信号触发"
+
+        # 卖出原因: ATR止损 (close < stop_line) 或 量价背离
+        f15_exit = volume_divergence_exits(df, entries)
+        for idx in exits[exits].index:
+            parts = []
+            sl = stop_line.loc[idx] if idx in stop_line.index else np.nan
+            if not np.isnan(sl) and close.loc[idx] < sl:
+                parts.append("ATR跟踪止损")
+            if f15_exit.loc[idx]:
+                parts.append("量价背离")
+            ts = int(pd.Timestamp(idx).timestamp() * 1000)
+            sell_reasons[ts] = " | ".join(parts) if parts else "退出信号"
+
+        return {"buy_reasons": buy_reasons, "sell_reasons": sell_reasons}
 
     def _compute_size(self, df, entries, exits, atr_s, adx_s, p):
         """第6层 仓位控制 (EXPERIENCE 15.4/15.6)。

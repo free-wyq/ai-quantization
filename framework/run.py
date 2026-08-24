@@ -42,7 +42,7 @@ COST_FEES = 0.0008      # 佣金+印花税 (买卖平均)
 COST_SLIPPAGE = 0.001   # 滑点 0.1%
 
 
-def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indicators):
+def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indicators, reasons=None):
     """把本次回测结果写成独立 JSON 文件 (按 代码_策略_时间 命名), 并重建看板。"""
     os.makedirs(RUNS_DIR, exist_ok=True)
     now = datetime.datetime.now()
@@ -60,6 +60,8 @@ def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indica
         })
 
     # 从 vectorbt 实际成交记录提取买卖点 (而非原始信号, 避免无持仓时的虚假卖出)
+    buy_reasons = reasons.get("buy_reasons", {}) if reasons else {}
+    sell_reasons = reasons.get("sell_reasons", {}) if reasons else {}
     buys, sells = [], []
     try:
         trades_df = pf.trades.records_readable
@@ -70,9 +72,11 @@ def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indica
             exit_price = round(float(row["Avg Exit Price"]), 2)
             pnl = round(float(row["PnL"]), 2)
             ret = round(float(row["Return"]) * 100, 2)
-            buys.append({"timestamp": entry_ts, "price": entry_price})
+            buys.append({"timestamp": entry_ts, "price": entry_price,
+                         "reason": buy_reasons.get(entry_ts, "")})
             sells.append({"timestamp": exit_ts, "price": exit_price,
-                          "pnl": pnl, "return": ret})
+                          "pnl": pnl, "return": ret,
+                          "reason": sell_reasons.get(exit_ts, "")})
     except Exception as e:
         print(f"  [警告] 提取成交记录失败: {e}")
 
@@ -124,7 +128,12 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: 
     strategy = STRATS[strategy_key](**param_overrides)
     result = strategy.run(df)
     entries, exits, indicators = result[0], result[1], result[2]
-    size = result[3] if len(result) > 3 else None
+    size = result[3] if len(result) > 3 and result[3] is not None and not isinstance(result[3], dict) else None
+    reasons = None
+    for item in result[3:]:
+        if isinstance(item, dict) and "buy_reasons" in item:
+            reasons = item
+            break
 
     # 3. 向量化回测: A股成本模型 (佣金+印花税+滑点), 初始资金10万, 满仓做多
     pf = vbt.Portfolio.from_signals(
@@ -132,6 +141,7 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: 
         entries=entries,
         exits=exits,
         size=size,
+        size_type='percent' if size is not None else None,
         direction="longonly",
         init_cash=100000.0,
         fees=COST_FEES,
@@ -199,7 +209,7 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: 
 
     # 6. 导出结果 + 生成离线看板
     if do_plot:
-        _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indicators)
+        _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indicators, reasons)
 
 
 if __name__ == "__main__":

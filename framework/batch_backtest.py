@@ -59,6 +59,7 @@ def _run_backtest(df, strategy_key, param_overrides=None):
         entries=entries,
         exits=exits,
         size=size,
+        size_type='percent' if size is not None else None,
         direction="longonly",
         init_cash=INIT_CASH,
         fees=COST_FEES,

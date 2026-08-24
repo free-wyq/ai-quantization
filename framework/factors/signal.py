@@ -10,14 +10,19 @@ import numpy as np
 
 
 def macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9):
-    """MACD 金叉 (F10)。返回 (金叉布尔 Series, DIF, DEA)。"""
+    """MACD 多头状态 (F10)。返回 (多头布尔 Series, DIF, DEA)。
+
+    多头状态 = DIF > DEA, 从金叉持续到死叉 (非单日事件)。
+    这样与其他持续状态条件(周KDJ多头/MA60向上)可以自然重叠,
+    不会因"金叉当天恰好不满足其他条件"而漏掉趋势。
+    """
     close = df["close"].astype(float)
     ema_fast = close.ewm(span=fast, adjust=False).mean()
     ema_slow = close.ewm(span=slow, adjust=False).mean()
     dif = ema_fast - ema_slow
     dea = dif.ewm(span=signal, adjust=False).mean()
-    cross_up = (dif > dea) & (dif.shift(1) <= dea.shift(1))
-    return cross_up.fillna(False), dif, dea
+    macd_bull = (dif > dea).fillna(False)
+    return macd_bull, dif, dea
 
 
 def weekly_kdj(df: pd.DataFrame, n: int = 9, k_period: int = 3, d_period: int = 3):
@@ -50,26 +55,36 @@ def ma_trend(df: pd.DataFrame, period: int = 60):
     return (close > ma).fillna(False), ma
 
 
-def volume_ratio(df: pd.DataFrame, window: int = 20, min_ratio: float = 1.2):
-    """量比确认 (F13)。返回 (量比>min_ratio 布尔, 量比序列)。"""
+def volume_ratio(df: pd.DataFrame, window: int = 20, min_ratio: float = 1.2, lookback: int = 5):
+    """量比确认 (F13)。返回 (量比满足布尔, 量比序列)。
+
+    lookback: 近N日内有任意一天量比>min_ratio即满足 (信号持续)。
+    放量往往只持续1-2天, 用lookback避免与MACD等持续状态错位。
+    lookback=1 时退化为原始行为 (仅当天满足)。
+    """
     vol = df["volume"].astype(float)
     avg = vol.rolling(window).mean()
     ratio = vol / avg
-    return (ratio > min_ratio).fillna(False), ratio
+    raw = (ratio > min_ratio).fillna(False)
+    if lookback > 1:
+        raw = raw.rolling(lookback).max().fillna(0).astype(bool)
+    return raw, ratio
 
 
 def build_entries(df: pd.DataFrame, use_weekly_kdj: bool = True, use_ma60: bool = True,
-                 use_vol: bool = True, vol_min: float = 1.2):
-    """综合个股入场信号 = 周KDJ多头 & MACD金叉 & MA60向上 & 量比>1.2。
+                 use_vol: bool = True, vol_min: float = 1.2, vol_lookback: int = 5):
+    """综合个股入场信号 = MACD多头 & 周KDJ多头 & MA60向上 & 量比放大(近N日)。
 
-    输出为布尔 Series (与 df 等长), True=当日触发买入信号。
+    所有条件均为持续状态(非单日事件), 避免多条件同日共振过严。
+    MACD多头从金叉持续到死叉; 量比用lookback窗口放宽;
+    周KDJ/MA60本身就是持续状态。
     """
-    macd_cross, _, _ = macd(df)
+    macd_bull, _, _ = macd(df)
     weekly_long, _, _ = weekly_kdj(df)
     ma60_up, _ = ma_trend(df, 60)
-    vol_ok, _ = volume_ratio(df, min_ratio=vol_min)
+    vol_ok, _ = volume_ratio(df, min_ratio=vol_min, lookback=vol_lookback)
 
-    entries = macd_cross.copy()
+    entries = macd_bull.copy()
     if use_weekly_kdj:
         entries = entries & weekly_long
     if use_ma60:
