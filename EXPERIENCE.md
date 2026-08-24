@@ -1,6 +1,12 @@
 # 量化交易实战经验总结
 
-> 基于本项目9个策略 × 30只A股 × 5年回测（2021-2026）验证得出
+> 基于本项目 9 策略 × 30 只 A 股 × 5 年回测（2021-2026）验证得出
+>
+> **代码现状说明**：项目最初有 9 个独立策略，经多轮重构已收敛为**单一 `midterm` 复合策略**
+> （七层闭环，详见 `STRATEGY_GUIDE.md`），把趋势/震荡/过滤/退出/仓位集成在一条策略里。
+> 旧 9 策略均已删除，但本文保留作**经验档案**——回测数据结论与策略设计经验仍然成立，
+> 只是落地方式从"多策略组合"变成"单策略七层闭环"。下文提及 ma/macd/rsi 等策略名时
+> 指历史策略档案，非当前代码。
 
 ---
 
@@ -235,31 +241,35 @@ f* = (p × b - q) / b
 
 ## 六、代码级Bug和隐患
 
-### 6.1 已发现的问题
+> 注：本节记录的是 9 策略时期的代码问题。后续已通过"删冗余策略 + 基类模板方法重构"
+> 解决——只保留 midterm，公共指标(MA系统/量比)上提到 `Strategy` 基类，ATR/ADX 等
+> 统一到 `framework/factors/`。下表保留作历史档案，行号已与当前代码无关。
 
-| # | 问题 | 文件 | 严重度 |
-|---|------|------|--------|
-| 1 | 日期硬编码 `20260101`-`20260818`，`--start/--end`被忽略 | `optimize.py:64` | 高 |
-| 2 | ATR计算重复三份，改一个忘改另外两个 | `trend_rider.py` / `kdj.py` / `adx.py` | 中 |
-| 3 | KDJ死参数 `ma_period` 还在params里但代码不用 | `kdj.py:84` | 低 |
-| 4 | `optimize.py` 的 `PARAM_GRIDS` 缺少kdj和trend_rider | `optimize.py:28-36` | 高 |
-| 5 | RSI阈值40/60非标准（标准30/70），信号多但质量低 | `rsi.py:55` | 中 |
-| 6 | `batch_backtest.py` 没有传 `sl_stop/tp_stop` | `batch_backtest.py:55-63` | 中 |
-| 7 | Regime策略MA画在副图不在主图 | `regime.py:79-82` | 低 |
-| 8 | Turtle进出场用同一周期(20/20)，经典是20/10 | `turtle.py:9` | 中 |
-| 9 | 成本模型不精确（无最小手续费、无过户费区分） | `run.py:41-42` | 低 |
+### 6.1 已发现的问题（历史档案）
+
+| # | 问题 | 历史文件 | 严重度 | 现状 |
+|---|------|------|--------|------|
+| 1 | 日期硬编码 `20260101`-`20260818`，`--start/--end`被忽略 | `optimize.py` | 高 | 已修 |
+| 2 | ATR计算重复三份，改一个忘改另外两个 | `trend_rider.py` / `kdj.py` / `adx.py` | 中 | 已删，统一到 `factors/exit.py` |
+| 3 | KDJ死参数 `ma_period` 还在params里但代码不用 | `kdj.py` | 低 | 已删 |
+| 4 | `optimize.py` 的 `PARAM_GRIDS` 缺少kdj和trend_rider | `optimize.py` | 高 | 已修，只留 midterm grid |
+| 5 | RSI阈值40/60非标准（标准30/70），信号多但质量低 | `rsi.py` | 中 | 已删 |
+| 6 | `batch_backtest.py` 没有传 `sl_stop/tp_stop` | `batch_backtest.py` | 中 | 待办 |
+| 7 | Regime策略MA画在副图不在主图 | `regime.py` | 低 | 已删 |
+| 8 | Turtle进出场用同一周期(20/20)，经典是20/10 | `turtle.py` | 中 | 已删 |
+| 9 | 成本模型不精确（无最小手续费、无过户费区分） | `run.py` | 低 | 待办 |
 
 ### 6.2 框架级缺失
 
 ```
-缺失功能:
-  ✗ 无仓位管理 (vectorbt支持size参数，加一行即可)
+历史缺失（部分已补）:
+  ✓ 仓位管理 (midterm _compute_size 半Kelly × ADX系数 + 分级 + 连损冷却)
+  ✓ 信号强度分级 (STRATEGY_GUIDE.md 理论, midterm 仓位层 A/B 分级落地)
   ✗ 无分年度统计 (只有full/train/test三段)
-  ✗ 无组合回测 (1策略×1股票，无多策略组合净值)
-  ✗ 无并行执行 (810次回测串行跑很慢)
+  ✗ 无组合回测 (单策略×单股票，无多策略组合净值)
+  ✗ 无并行执行 (批量回测串行跑很慢)
   ✗ 无指数/ETF数据支持 (fetcher.py只支持个股)
-  ✗ 无成交量确认 (9个策略没有一个看量价配合)
-  ✗ 无信号强度分级 (STRATEGY_GUIDE.md写了但没实现)
+  △ 成交量确认 (已上提到基类量比 VR 指标 + midterm 量比入场过滤)
 ```
 
 ---
@@ -269,47 +279,42 @@ f* = (p × b - q) / b
 ### 7.1 紧急修复（代码bug）
 
 ```
-① 修复optimize.py日期硬编码          — 1行改动
-② 给optimize.py加kdj/trend_rider网格  — 2行
-③ 修复regime.py MA画错位置           — 2行改动
-④ 清理KDJ死参数ma_period             — 删几行
-⑤ 统一ATR计算到base.py              — 消除三份重复
+① 修复optimize.py日期硬编码          — 已修
+② 给optimize.py加kdj/trend_rider网格  — 策略已删, 只留 midterm grid
+③ 修复regime.py MA画错位置           — 策略已删
+④ 清理KDJ死参数ma_period             — 策略已删
+⑤ 统一ATR计算到因子库               — 已落地 (framework/factors/exit.py, 消除三份重复)
 ```
 
 ### 7.2 高收益改进（策略逻辑）
 
 ```
-⑥ MACD/Turtle/RSI/MA统一加ATR止损    — 改4个文件
-   → 预期盈亏比从0.8提到2+
-   → 这是收益提升最大的单点改动
+⑥ MACD/Turtle/RSI/MA统一加ATR止损    — 收敛到 midterm: ATR跟踪止损已是统一退出
+   → 盈亏比提升(理论)
 
-⑦ RSI阈值改回30/70                   — 1行
-   → 信号减半，质量提升
+⑦ RSI阈值改回30/70                   — 策略已删
 
-⑧ Turtle改经典20/10参数              — 1行
-   → 快进慢出，减少假突破
+⑧ Turtle改经典20/10参数              — 策略已删
 
-⑨ 给所有策略加ADX过滤                — 每个策略加几行
-   → 震荡市不做趋势策略
-   → 预期交易次数减半，假信号过滤
+⑨ 给所有策略加ADX过滤                — midterm 用 ADX 定止损宽度(第4层环境)
+   → 震荡市不持仓
 
-⑩ 加成交量确认过滤                   — 每个策略加几行
-   → 放量信号才有效
+⑩ 加成交量确认过滤                   — 已落地 (量比>1.2 入场过滤 + 基类 VR 量比指标)
 ```
 
 ### 7.3 框架升级
 
 ```
-⑪ 加仓位管理(size参数)               — run.py改几行
-   → 回撤从40%降到15%
+⑪ 加仓位管理(size参数)               — midterm _compute_size 已落地(半Kelly×ADX+分级+冷却)
+   → 回撤显著降低(理论)
 
-⑫ 加分年度统计                       — batch_backtest.py
+⑫ 加分年度统计                       — batch_backtest.py (待办)
    → 知道策略在牛/熊/震荡分别表现
 
-⑬ 加并行执行                         — batch_backtest.py
-   → 810次回测从30分钟降到5分钟
+⑬ 加并行执行                         — batch_backtest.py (待办)
+   → 批量回测从串行提速
 
-⑭ 加指数数据支持                     — fetcher.py
+⑭ 加指数数据支持                     — fetcher.py (待办)
    → 可回测指数/ETF
 ```
 
@@ -373,21 +378,25 @@ f* = (p × b - q) / b
 
 ### 10.2 长短线策略配置建议
 
+> 历史 9 策略配置建议。当前项目收敛为单一 midterm 复合策略（七层闭环，详见
+> `STRATEGY_GUIDE.md`），把"中线趋势为主 + ADX 过滤震荡市 + 量比确认 + 半Kelly仓位"
+> 集成在一条策略里。下表保留作历史经验。
+
 ```
 核心原则: 长短结合，都做，不偏废。但都只做龙头、都控制成本。
 
 长线/中线策略 (吃趋势):
-  ✓ MACD       — 收益最好，改ATR退出即可
-  ✓ Turtle    — 逻辑经典，改20/10参数
-  ✓ MA         — 退出太差，改ATR退出
-  ✓ TrendRider — 设计对了，验证即可
-  ✓ ADX        — 回撤最低，做市场状态过滤器
+  ✓ MACD       — 收益最好，改ATR退出即可   ← 已并入 midterm 第3层信号
+  ✓ Turtle    — 逻辑经典，改20/10参数      ← 历史策略已删
+  ✓ MA         — 退出太差，改ATR退出         ← 历史策略已删
+  ✓ TrendRider — 设计对了，验证即可          ← 历史策略已删
+  ✓ ADX        — 回撤最低，做市场状态过滤器  ← midterm 第4层环境用 ADX 定止损宽度
 
 短线策略 (控成本，降频后保留):
-  ✓ RSI        — 阈值改30/70降频，震荡市辅助
-  ✓ KDJ        — 加ADX过滤降频，短线补充
-  ✗ OBV        — 5年-16%无效，删除或重写
-  ? Regime     — 概念好但实现粗糙，需重写
+  ✓ RSI        — 阈值改30/70降频，震荡市辅助  ← 历史策略已删
+  ✓ KDJ        — 加ADX过滤降频，短线补充        ← midterm 用周KDJ定方向
+  ✗ OBV        — 5年-16%无效，删除或重写         ← 已删
+  ? Regime     — 概念好但实现粗糙，需重写        ← 已删
 
 长短线互补逻辑:
   中线(MACD/Turtle)  → 吃主升浪大利润, 低频低成本
@@ -1016,9 +1025,10 @@ framework/strategies/midterm.py    MidTermStrategy(Strategy) —— 七层编排
 
 **改动文件**
 ```
-framework/strategies/base.py       Strategy.run 契约扩展为可选返回 size(仓位比例)
-framework/run.py / batch_backtest.py  解包兼容 (3元组→4元组), from_signals(size=...) 透传
-data/fetcher 透传列                run.py/batch 行情列 5→6(增 amount/turnover_rate/symbol)
+framework/strategies/base.py       Strategy 基类: 模板方法重构 (run 骨架 + generate 钩子 + SignalResult)
+                                   公共指标 (MA系统 + 量比VR) 上提到基类统一组装
+framework/run.py / batch_backtest.py  解包兼容固定 5 元组, from_signals(size=...) 透传
+data/fetcher 透传列                run.py/batch 行情列 5→8(增 amount/turnover_rate/symbol)
 ```
 
 **第六层 size 实现（半Kelly × ADX系数 + 分级 + 连损冷却）**
@@ -1028,6 +1038,9 @@ size = 半Kelly(40%胜率3:1 → 10%) × ADX系数(强趋势1.0/弱0.6/<20=0) ×
 返回与 df 等长的 size Series, 引擎仅在 entry 当日读取该值作为仓位
 ```
 
+> 注：随后又做了两轮重构（量比 VR 上提 → MA系统上提 + 完整模板方法），
+> 详见 git log。当前 `midterm.generate()` 返回 `SignalResult`，公共指标全部由基类 `run()` 组装。
+
 **已删除**
 ```
 framework/backtest_midterm.py  (早期误建的重写回测器, 违反抽象层范式, 已删)
@@ -1035,12 +1048,14 @@ framework/backtest_midterm.py  (早期误建的重写回测器, 违反抽象层�
 
 **验证状态**
 ```
-✓ 单股 run() 返回四元组, size 计算无异常 (代码示例 000001 短区间)
-✓ 架构: Strategy 子类 + 引擎零改动 (仅透传多几列)
+✓ 单股 run() 返回 5 元组, size 计算无异常 (代码示例 000001 短区间)
+✓ 架构: 基类模板方法 (run 骨架 + generate 钩子), 引擎零改动 (仅透传多几列)
+✓ pytest tests/ 全绿 (test_base + test_strategies)
 ⏳ 全量回测待执行 (用户要求先搞代码、暂未跑)
 ```
 
 ---
 
-*最后更新: 2026-08-24*
+*最后更新: 2026-08-25*
 *基于: 9策略 × 30只A股 × 2021-2026回测数据 + 申万板块数据模块*
+*代码现状: 已收敛为单一 midterm 复合策略 + 基类模板方法 (历史 9 策略已删, 经验保留作档案)*

@@ -9,26 +9,33 @@ ai-Quantification/
 ├── config/                # 配置
 │   └── settings.py        # 全局配置 (资金、手续费、路径等)
 ├── data/                  # 数据模块
-│   └── fetcher.py         # 行情数据获取 (akshare + 本地缓存)
+│   ├── fetcher.py         # 行情数据获取 (akshare + 本地缓存)
+│   └── sectors.py         # 申万行业指数 + 板块/股票映射
 ├── framework/             # 回测框架
-│   ├── run.py             # 回测入口
-│   ├── serve_dashboard.py # 看板服务
+│   ├── run.py             # 回测入口 (单股 + 看板导出)
+│   ├── server_dashboard.py# 看板服务 (动态注入 runs/, 端口 8000)
+│   ├── batch_backtest.py  # 30股批量回测 (train/test 拆分)
+│   ├── optimize.py        # 参数网格搜索 + 样本外验证
 │   ├── strategies/        # 策略包 (自动发现)
-│   │   ├── base.py        # 策略基类
-│   │   ├── ma.py          # 双均线交叉
-│   │   ├── macd.py        # MACD
-│   │   ├── adx.py         # ADX 趋势强度
-│   │   ├── rsi.py         # RSI 超买超卖
-│   │   ├── obv.py         # OBV 能量潮
-│   │   ├── regime.py      # 市场状态自适应
-│   │   ├── turtle.py      # 唐奇安通道
-│   │   └── custom/        # 用户自定义策略
+│   │   ├── base.py        # 策略基类 (模板方法: run 骨架 + generate 钩子)
+│   │   └── midterm.py     # 中期复合策略 (信号 + 退出)
+│   ├── factors/           # 因子库 (纯函数: 日K 进, 等长对齐 Series 出)
+│   │   ├── signal.py      # MACD / 周KDJ / MA / 量比 / build_entries
+│   │   ├── exit.py        # ATR跟踪止损 / 量价背离 / ADX / build_exits
+│   │   ├── market_state.py# 个股广度 / 板块温度 / 情绪 (库内备用, 暂未接入)
+│   │   ├── sector_trend.py# 板块趋势 (库内备用, 暂未接入)
+│   │   └── leader.py      # 龙头筛选 (库内备用, 暂未接入)
 │   └── results/           # 看板前端 + 回测结果
+│       ├── dashboard.html # 看板 (手写静态, 绝不修改)
 │       ├── dashboard.js   # klinecharts 可视化
 │       ├── dashboard.css
-│       └── index.html
-├── requirements.txt
-└── README.md
+│       └── klinecharts.min.js
+├── tests/                 # pytest (conftest 构造模拟K线, 不依赖网络)
+├── EXPERIENCE.md          # 9策略×30股×5年回测实战经验 (历史经验事实来源)
+├── STRATEGY_GUIDE.md      # 策略设计理论 (信号分级/Kelly/ATR止损/七层架构)
+├── ROADMAP.md             # 演进路线
+├── CLAUDE.md              # Claude Code 指引
+└── requirements.txt
 ```
 
 ## 快速开始
@@ -36,76 +43,78 @@ ai-Quantification/
 ### 1. 安装依赖
 
 ```bash
-python -m venv venv
-venv\Scripts\activate          # Windows
-# source venv/bin/activate     # Linux/Mac
+python -m venv venv && source venv/bin/activate     # Linux/Mac
+# venv\Scripts\activate                              # Windows
 pip install -r requirements.txt
+# 关键依赖: vectorbt>=0.25 (回测)、akshare (行情)、ta (指标)、loguru、python-dotenv
 ```
+
+> **WSL 注意**: Windows 侧的 `venv/`(python.exe) 不可在 WSL 用，必须建 Linux venv (python3 是 3.10)。
 
 ### 2. 运行回测
 
 ```bash
-# 默认: regime 策略 + 平安银行(000001)
+# 默认: midterm 策略 + 平安银行(000001)
 python framework/run.py
 
-# 指定策略与股票
-python framework/run.py ma 600519
-python framework/run.py macd 000001
-python framework/run.py regime 000001
-
-# 查看可用策略
-python framework/run.py --list
+# 指定策略与股票 (目前内置仅 midterm)
+python framework/run.py midterm 000001
+python framework/run.py midterm 000001 -p vol_min=1.5      # 覆盖参数
+python framework/run.py midterm 000001 --sl 5 --tp 10       # 止损止盈(百分比)
+python framework/run.py midterm 000001 --start 20250101 --end 20260818
+python framework/run.py midterm 000001 --optimize          # 网格搜索 + 样本外验证
+python framework/run.py --list                             # 列所有策略
 ```
 
 ### 3. 查看看板
 
 ```bash
 python framework/server_dashboard.py
-# 浏览器打开 http://localhost:8080
+# 浏览器打开 http://localhost:8000/framework/results/dashboard.html
 ```
 
-看板展示 K 线 + 买卖标注 + 成交量 + 权益曲线 + 策略指标，支持十字光标联动。
+看板展示 K 线 + MA 均线 + 买卖标注 + 成交量/量比双 Y 轴 + 权益曲线 + 策略指标，
+支持十字光标联动。每次回测往 `framework/results/runs/` 写独立 JSON，刷新页面即重新扫描，
+**不重新生成 HTML** (`file://` 打开无效，必须走 `server_dashboard.py`)。
 
 ### 4. 自定义策略
 
-在 `framework/strategies/custom/` 下新建 `.py` 文件，继承 `Strategy` 类：
+在 `framework/strategies/` (或其 `custom/` 子包) 下新建 `.py` 文件，继承 `Strategy`，
+实现 `generate()` 钩子返回 `SignalResult`：
 
 ```python
-from ..base import Strategy, series_to_list
+from framework.strategies.base import Strategy, SignalResult, series_to_list
 
 class MyStrategy(Strategy):
     name = "my"
     label = "我的策略"
     params = {"period": 20}
 
-    def run(self, df):
+    def generate(self, df) -> SignalResult:
         close = df["close"]
-        n = len(df)
         ma = close.rolling(self.params["period"]).mean()
         entries = close > ma
         exits = close < ma
+        # 特色指标只放策略自己的; MA系统 + 量比(VR) 由基类 run() 统一组装
         indicators = [
-            {"name": "MA", "shortName": "MA20", "pane": "main",
-             "color": "#ffa940", "values": series_to_list(ma, n)},
+            {"name": "MA20", "shortName": "MA20", "pane": "main", "paneId": "main",
+             "color": "#ffa940", "values": series_to_list(ma, len(df))},
         ]
-        return entries.fillna(False), exits.fillna(False), indicators
+        return SignalResult(entries.fillna(False), exits.fillna(False), indicators)
 ```
 
-框架自动发现，无需修改任何框架代码。
+框架自动发现 (无需改任何框架代码)。基类 `run()` 是模板骨架，自动注入公共指标
+(MA5/10/20/60 主图均线 + 量比 VR 副图) 并调子类 `generate()`，返回固定 5 元组
+`(entries, exits, indicators, size, reasons)` 供回测引擎消费。
 
 ## 策略一览
 
-| 策略 | 类型 | 适合市场 | 说明 |
-|------|------|---------|------|
-| ma | 趋势 | 单边趋势 | 双均线交叉，快线上穿慢线买入 |
-| macd | 趋势 | 单边趋势 | MACD 柱状图由负转正买入 |
-| adx | 趋势 | 强趋势 | ADX>25 且 +DI/-DI 交叉 |
-| rsi | 震荡 | 横盘震荡 | RSI 超卖买入、超买卖出 |
-| obv | 量价 | 趋势确认 | OBV 上穿均线买入 |
-| regime | 自适应 | 全市场 | ADX 判断市场状态，自动切换 MA/RSI |
-| turtle | 趋势 | 强趋势 | 唐奇安通道突破 |
+| 策略 | 类型 | 说明 |
+|------|------|------|
+| midterm | 中期趋势 | 周KDJ + MACD + MA + 量比 共振入场，ATR跟踪止损 + 量价背离退出 |
 
 ## 数据源
 
 - [akshare](https://akshare.akfamily.xyz/) - 免费 A 股数据 (无需注册)
-- 本地缓存，首次下载后离线可用
+- 本地 CSV 缓存 (`data/{symbol}_daily.csv`)，首次下载后离线可用
+- 申万行业指数 + 板块/股票映射 (`data/sectors.py` + `sector_mapping.csv`/`stock_list.csv`)
