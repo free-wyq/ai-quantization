@@ -170,11 +170,11 @@ function render(idx){
         // 五层布局: 主图43% | 量+量比21% | MACD17% | ADX12% | 权益7%
         const totalH = chartEl.clientHeight;
         const layout = [
-          { id: 'candle_pane', height: Math.floor(totalH * 0.43) },
-          { id: 'vol_pane',    height: Math.floor(totalH * 0.21) },
-          { id: 'strat_strat', height: Math.floor(totalH * 0.17) },
-          { id: 'strat_adx',   height: Math.floor(totalH * 0.12) },
-          { id: 'equity_pane', height: Math.floor(totalH * 0.07) },
+          { id: 'candle_pane', height: Math.floor(totalH * 0.40) },
+          { id: 'vol_pane',    height: Math.floor(totalH * 0.15) },
+          { id: 'strat_strat', height: Math.floor(totalH * 0.15) },
+          { id: 'strat_adx',   height: Math.floor(totalH * 0.15) },
+          { id: 'equity_pane', height: Math.floor(totalH * 0.15) },
         ];
         layout.forEach(l => {
           try { chart.setPaneOptions({ id: l.id, height: l.height }); } catch(e) {}
