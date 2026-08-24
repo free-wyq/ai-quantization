@@ -77,17 +77,40 @@ klinecharts.registerIndicator({
   }))
 });
 
-// 量比线指标 (独立面板)
+// 自定义成交量+量比融合指标 (复制内置VOL柱子逻辑 + 量比线按均量缩放)
 let _vrValues = [];
 klinecharts.registerIndicator({
-  name: 'VR_LINE',
-  shortName: '量比',
-  series: 'normal',
-  precision: 2,
-  figures: [{ key: 'vr', title: '量比: ', type: 'line' }],
-  calc: dataList => dataList.map((d, i) => ({
-    vr: (i < _vrValues.length && _vrValues[i] != null) ? _vrValues[i] : null,
-  }))
+  name: 'VOL_1',
+  shortName: 'VOL/量比',
+  series: 'volume',
+  precision: 0,
+  figures: [
+    { key: 'vol', title: '成交量: ', type: 'bar' },
+    { key: 'vr',  title: '量比: ',  type: 'line' },
+  ],
+  calc: dataList => {
+    const n = dataList.length;
+    const maPeriod = 20;
+    // 计算20日均量用于缩放量比线
+    const volMA = [];
+    for (let i = 0; i < n; i++) {
+      const start = Math.max(0, i - maPeriod + 1);
+      const slice = [];
+      for (let j = start; j <= i; j++) slice.push(dataList[j].volume || 0);
+      volMA.push(slice.reduce((a, b) => a + b, 0) / slice.length);
+    }
+    return dataList.map((d, i) => {
+      const vol = d.volume || null;
+      const up = d.close >= d.open;
+      const vrRaw = (i < _vrValues.length && _vrValues[i] != null) ? _vrValues[i] : null;
+      const vrScaled = (vrRaw != null && volMA[i] > 0) ? vrRaw * volMA[i] : null;
+      // 柱子按K线涨跌着色: 涨红跌绿
+      return {
+        vol: { value: vol, color: up ? '#ef5350' : '#26a69a' },
+        vr: vrScaled
+      };
+    });
+  }
 });
 
 // 策略曲线: 按 paneId 分组, 同 pane 的多条线合并为一个指标的多 figures
@@ -98,7 +121,7 @@ function renderStrategyIndicators(r) {
   registeredStratInds = [];
   if (!r.indicators || !r.indicators.length) return;
 
-  // 过滤掉 VR (已合并到 VOL_VR 复合指标)
+  // 过滤掉 VR (已单独渲染到 vr_pane)
   const filtered = r.indicators.filter(i => i.name !== 'VR');
 
   // 按 paneId 分组 (main 单独处理)
@@ -159,8 +182,7 @@ function render(idx){
   if (!r) return;
 
   chart.removeOverlay();
-  chart.removeIndicator({ name: 'VOL' });
-  chart.removeIndicator({ name: 'VR_LINE' });
+  chart.removeIndicator({ name: 'VOL_1' });
   chart.removeIndicator({ name: 'EQUITY' });
 
   // v10: setSymbol + setPeriod + setDataLoader 三者就绪后触发 getBars
@@ -178,12 +200,11 @@ function render(idx){
         const fitBars = Math.floor(w / barSpace);
         chart.scrollToDataIndex(Math.min(r.candles.length - 1, fitBars - SCROLL_OFFSET));
 
-        // 四层布局: 主图50% | 成交量15% | 策略20% | 权益15%
+        // 四层布局: 主图45% | 成交量+量比22% | 策略18% | 权益15%
         const totalH = chartEl.clientHeight;
         const layout = [
           { id: 'candle_pane', height: Math.floor(totalH * 0.45) },
-          { id: 'vol_pane',    height: Math.floor(totalH * 0.12) },
-          { id: 'vr_pane',     height: Math.floor(totalH * 0.10) },
+          { id: 'vol_pane',    height: Math.floor(totalH * 0.22) },
           { id: 'strat_strat', height: Math.floor(totalH * 0.18) },
           { id: 'equity_pane', height: Math.floor(totalH * 0.15) },
         ];
@@ -198,13 +219,17 @@ function render(idx){
   const vrInd = (r.indicators || []).find(i => i.name === 'VR');
   _vrValues = vrInd ? vrInd.values : [];
 
-  // 内置 VOL (有颜色), 关闭默认成交量均线
-  chart.createIndicator({ name: 'VOL', paneId: 'vol_pane', calcParams: [] });
-
-  // 量比 (独立面板)
+  // 自定义 VOL_1: 成交量柱 + 量比线融合 (柱子按K线涨跌着色)
   chart.createIndicator({
-    name: 'VR_LINE', paneId: 'vr_pane',
-    styles: { lines: [{ color: '#52c41a', style: 'solid', size: 1 }] }
+    name: 'VOL_1', paneId: 'vol_pane',
+    styles: {
+      bars: [{
+        upColor: '#ef5350',
+        downColor: '#26a69a',
+        noChangeColor: '#888888'
+      }],
+      lines: [{ color: '#52c41a', style: 'solid', size: 1 }],
+    }
   });
 
   // 策略曲线 (MA均线/MACD等, 由策略函数动态提供)

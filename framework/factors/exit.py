@@ -101,6 +101,26 @@ def trailing_stop_exits(df, entries, atr_series, adx_series,
     return exits.fillna(False), stop_line
 
 
+def ma_stop_exits(df, entries, ma_period: int = 20):
+    """均线止损: 收盘跌破 MA(ma_period) 即退出。
+
+    止损线 = MA(ma_period), 持仓期间每日更新。
+    返回 (exits布尔, stop_line序列)。
+    """
+    close = df["close"].astype(float)
+    ma = close.rolling(ma_period).mean()
+    exits = pd.Series(False, index=df.index)
+    in_pos = False
+    for i in range(len(df)):
+        if entries.iloc[i] and not in_pos:
+            in_pos = True
+        elif in_pos:
+            if not np.isnan(ma.iloc[i]) and float(close.iloc[i]) < float(ma.iloc[i]):
+                exits.iloc[i] = True
+                in_pos = False
+    return exits.fillna(False), ma
+
+
 def volume_divergence_exits(df, entries, window: int = 20,
                             low_ratio: float = 0.8, high_ratio: float = 3.0):
     """量价背离退出 (F15): 缩量跌回突破位 / 放量滞涨。返回布尔 Series。
@@ -130,17 +150,24 @@ def volume_divergence_exits(df, entries, window: int = 20,
 
 def build_exits(df, entries, atr_period: int = 14, adx_period: int = 14,
                 mult_strong: float = 3.5, mult_weak: float = 2.0, adx_thresh: float = 30.0,
-                use_f15: bool = False, profit_tighten=None, max_retracement=None):
-    """综合退出 = ATR跟踪止损 (默认) + 量价背离(可选)。返回 (exits, stop_line)。"""
-    atr_s = atr(df, atr_period)
-    adx_s, _, _ = adx(df, adx_period)
-    atr_exit, stop_line = trailing_stop_exits(
-        df, entries, atr_s, adx_s,
-        mult_strong=mult_strong, mult_weak=mult_weak, adx_thresh=adx_thresh,
-        profit_tighten=profit_tighten, max_retracement=max_retracement)
+                use_f15: bool = False, profit_tighten=None, max_retracement=None,
+                use_ma_stop: bool = False, ma_stop_period: int = 20):
+    """综合退出 = MA止损 / ATR跟踪止损 + 量价背离(可选)。返回 (exits, stop_line)。
+
+    use_ma_stop=True 时使用均线止损 (收盘跌破MA即退出), 忽略 ATR 止损参数。
+    """
+    if use_ma_stop:
+        base_exit, stop_line = ma_stop_exits(df, entries, ma_period=ma_stop_period)
+    else:
+        atr_s = atr(df, atr_period)
+        adx_s, _, _ = adx(df, adx_period)
+        base_exit, stop_line = trailing_stop_exits(
+            df, entries, atr_s, adx_s,
+            mult_strong=mult_strong, mult_weak=mult_weak, adx_thresh=adx_thresh,
+            profit_tighten=profit_tighten, max_retracement=max_retracement)
     if use_f15:
         f15_exit = volume_divergence_exits(df, entries)
-        exits = atr_exit | f15_exit
+        exits = base_exit | f15_exit
     else:
-        exits = atr_exit
+        exits = base_exit
     return exits.fillna(False), stop_line

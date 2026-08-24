@@ -119,6 +119,8 @@ class MidTermStrategy(Strategy):
     "use_f15": False,
     "profit_tighten": None,
     "max_retracement": 0.10,
+    "use_ma_stop": True,
+    "ma_stop_period": 20,
         "top_n": 3,
         "temp_th": 50.0, "breadth_th": 60.0,
         "no_weekly": False, "no_ma60": False, "no_vol": False,
@@ -200,6 +202,8 @@ class MidTermStrategy(Strategy):
             adx_thresh=p["adx_thresh"], use_f15=p["use_f15"],
             profit_tighten=p.get("profit_tighten"),
             max_retracement=p.get("max_retracement"),
+            use_ma_stop=p.get("use_ma_stop", False),
+            ma_stop_period=p.get("ma_stop_period", 20),
         )
 
         # --- 可视化指标 ---
