@@ -210,7 +210,9 @@ class MidTermStrategy(Strategy):
         macd_bull, dif, dea = macd(df)
         wk_long, _, _ = weekly_kdj(df)
         ma60_up, ma60 = ma_trend(df, 60)
-        vol_ok, ratio = volume_ratio(df, min_ratio=p["vol_min"], lookback=p["vol_lookback"])
+        vol_ok, _ = volume_ratio(df, min_ratio=p["vol_min"], lookback=p["vol_lookback"])
+        # 显示用: 量比值序列 (基类公共口径, 1上下真实值, 供看板双Y轴左轴)
+        vr_ratio = self.compute_volume_ratio(df)
         atr_s = atr(df, p["atr"])
         close = df["close"].astype(float)
         ma5 = close.rolling(5).mean()
@@ -228,9 +230,8 @@ class MidTermStrategy(Strategy):
              "color": "#f5222d", "values": series_to_list(ma60, n)},
             {"name": "ATRstop", "shortName": "ATR止损", "pane": "main", "paneId": "main",
              "color": "#fa8c16", "lineStyle": "dashed", "values": series_to_list(stop_line, n)},
-            # 成交量副图: 量比
-            {"name": "VR", "shortName": "量比", "pane": "separate", "paneId": "vol",
-             "color": "#52c41a", "values": series_to_list(ratio, n)},
+            # 成交量副图: 量比 (基类 vr_indicator, name='VR' 看板契约)
+            self.vr_indicator(vr_ratio, n),
             # 策略副图: MACD
             {"name": "DIF", "shortName": "DIF", "pane": "separate", "paneId": "strat",
              "color": "#ffa940", "values": series_to_list(dif, n)},

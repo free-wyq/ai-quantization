@@ -78,6 +78,31 @@ class Strategy:
         """
         raise NotImplementedError
 
+    # ---- 公共指标计算 (模板方法: 所有策略共享, 保证看板契约一致) ----
+    # 设计: K线/成交量柱由看板渲染层统一画, 不进策略 indicators;
+    #       量比(VR)是跨策略通用的市场结构指标, 计算口径与指标结构上提到基类,
+    #       子类调用即可获得一致的量比线, 避免各策略手写 dict / 口径漂移;
+    #       各策略特色指标 (MACD/RSI/KDJ 等) 才由子类自行实现。
+    def compute_volume_ratio(self, df: pd.DataFrame, window: int = 20) -> pd.Series:
+        """量比值序列 = 当日成交量 / 过去 window 日均量。
+
+        所有策略共用同一口径: >1 放量, <1 缩量, 1 上下波动。
+        window 默认 20 (与 framework/factors/signal.py 的 volume_ratio 默认一致)。
+        """
+        vol = df["volume"].astype(float)
+        return vol / vol.rolling(window).mean()
+
+    def vr_indicator(self, ratio: pd.Series, n: int, color: str = "#52c41a") -> dict:
+        """量比指标 dict。
+
+        name 固定为 'VR' —— 这是与 dashboard.js 的显式契约:
+        vol_pane 双 Y 轴左轴通过 find(name==='VR') 提取量比值渲染, name 不符则量比线不显示。
+        子类在 indicators 列表里 append 本方法返回值即可获得量比线。
+        ratio 应来自 compute_volume_ratio (或等价计算)。
+        """
+        return {"name": "VR", "shortName": "量比", "pane": "separate", "paneId": "vol",
+                "color": color, "values": series_to_list(ratio, n)}
+
 
 def series_to_list(s, n):
     """pandas Series -> list[float|None], NaN 转 None"""

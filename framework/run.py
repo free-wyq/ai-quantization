@@ -135,6 +135,11 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: 
             reasons = item
             break
 
+    # 2.1 公共指标兜底: 量比(VR) 是看板双Y轴左轴的契约指标 (dashboard.js 按 name==='VR' 提取)。
+    # 策略类提供 compute_volume_ratio/vr_indicator, 但老策略未必调用 — 这里保证所有回测都有量比线。
+    if not any(i.get("name") == "VR" for i in indicators):
+        indicators.append(strategy.vr_indicator(strategy.compute_volume_ratio(df), len(df)))
+
     # 3. 向量化回测: A股成本模型 (佣金+印花税+滑点), 初始资金10万, 满仓做多
     pf = vbt.Portfolio.from_signals(
         close=df["close"],
