@@ -135,31 +135,36 @@ class MidTermStrategy(Strategy):
         if "symbol" in df.columns:
             sym = str(df["symbol"].iloc[0]).zfill(6)
 
-        # --- 跨股票状态 ---
-        state = _compute_state(
-            df.index.min(), df.index.max(),
-            p["temp_th"], p["breadth_th"], p["top_n"],
-        )
-        gate = state["gate"].reindex(df.index).fillna(False)
-        mapping = state["mapping"]
+        # --- 跨股票状态 (懒加载: 仅在需要时才计算全市场数据) ---
+        need_cross = p["use_sector_strong"] or p["use_leader"] or p["use_gate"]
+        if need_cross:
+            state = _compute_state(
+                df.index.min(), df.index.max(),
+                p["temp_th"], p["breadth_th"], p["top_n"],
+            )
+            gate = state["gate"].reindex(df.index).fillna(False)
+            mapping = state["mapping"]
 
-        # 所属板块 & 龙头标记
-        sec_name = None
-        if sym is not None:
-            sub = mapping[mapping["symbol"] == sym]
-            if len(sub):
-                sec_name = sub["sector_name"].iloc[0]
-        if sec_name and sec_name in state["sector_strong_map"]:
-            sstrong = state["sector_strong_map"][sec_name].reindex(df.index).fillna(False)
+            # 所属板块 & 龙头标记
+            sec_name = None
+            if sym is not None:
+                sub = mapping[mapping["symbol"] == sym]
+                if len(sub):
+                    sec_name = sub["sector_name"].iloc[0]
+            if sec_name and sec_name in state["sector_strong_map"]:
+                sstrong = state["sector_strong_map"][sec_name].reindex(df.index).fillna(False)
+            else:
+                sstrong = pd.Series(False, index=df.index)
+            if sym and sym in state["leader_map"]:
+                lflag = state["leader_map"][sym].reindex(df.index).fillna(False)
+            elif sym and sec_name:
+                lflag = compute_leader_for_stock(
+                    sym, df, state["pool"], mapping, top_n=p["top_n"]).fillna(False)
+            else:
+                lflag = pd.Series(False, index=df.index)
         else:
+            gate = pd.Series(False, index=df.index)
             sstrong = pd.Series(False, index=df.index)
-        if sym and sym in state["leader_map"]:
-            lflag = state["leader_map"][sym].reindex(df.index).fillna(False)
-        elif sym and sec_name:
-            # 股票不在池内, 实时计算龙头标记
-            lflag = compute_leader_for_stock(
-                sym, df, state["pool"], mapping, top_n=p["top_n"]).fillna(False)
-        else:
             lflag = pd.Series(False, index=df.index)
 
         # --- 第3层 个股信号 ---
@@ -196,17 +201,30 @@ class MidTermStrategy(Strategy):
         ma60_up, ma60 = ma_trend(df, 60)
         vol_ok, ratio = volume_ratio(df, min_ratio=p["vol_min"], lookback=p["vol_lookback"])
         atr_s = atr(df, p["atr"])
+        close = df["close"].astype(float)
+        ma5 = close.rolling(5).mean()
+        ma10 = close.rolling(10).mean()
+        ma20 = close.rolling(20).mean()
         indicators = [
-            {"name": "DIF", "shortName": "DIF", "pane": "separate", "paneId": "macd",
-             "color": "#ffa940", "values": series_to_list(dif, n)},
-            {"name": "DEA", "shortName": "DEA", "pane": "separate", "paneId": "macd",
-             "color": "#42a5f5", "values": series_to_list(dea, n)},
+            # 主图: 均线 + ATR止损
+            {"name": "MA5", "shortName": "MA5", "pane": "main", "paneId": "main",
+             "color": "#faad14", "values": series_to_list(ma5, n)},
+            {"name": "MA10", "shortName": "MA10", "pane": "main", "paneId": "main",
+             "color": "#13c2c2", "values": series_to_list(ma10, n)},
+            {"name": "MA20", "shortName": "MA20", "pane": "main", "paneId": "main",
+             "color": "#722ed1", "values": series_to_list(ma20, n)},
             {"name": "MA60", "shortName": "MA60", "pane": "main", "paneId": "main",
              "color": "#f5222d", "values": series_to_list(ma60, n)},
-            {"name": "VR", "shortName": "量比", "pane": "separate", "paneId": "vol",
-             "color": "#52c41a", "values": series_to_list(ratio, n)},
             {"name": "ATRstop", "shortName": "ATR止损", "pane": "main", "paneId": "main",
              "color": "#fa8c16", "lineStyle": "dashed", "values": series_to_list(stop_line, n)},
+            # 成交量副图: 量比
+            {"name": "VR", "shortName": "量比", "pane": "separate", "paneId": "vol",
+             "color": "#52c41a", "values": series_to_list(ratio, n)},
+            # 策略副图: MACD
+            {"name": "DIF", "shortName": "DIF", "pane": "separate", "paneId": "strat",
+             "color": "#ffa940", "values": series_to_list(dif, n)},
+            {"name": "DEA", "shortName": "DEA", "pane": "separate", "paneId": "strat",
+             "color": "#42a5f5", "values": series_to_list(dea, n)},
         ]
 
         # --- 买卖原因 ---

@@ -77,6 +77,27 @@ klinecharts.registerIndicator({
   }))
 });
 
+// 自定义成交量+量比复合指标 (量比缩放到成交量量级, 共享同一 y 轴)
+let _vrValues = [];
+klinecharts.registerIndicator({
+  name: 'VOL_VR',
+  shortName: '成交量/量比',
+  series: 'normal',
+  precision: 0,
+  figures: [
+    { key: 'volume', title: '成交量: ', type: 'bar' },
+    { key: 'vr', title: '量比: ', type: 'line' },
+  ],
+  calc: dataList => {
+    const maxVol = Math.max(...dataList.map(d => d.volume || 0), 1);
+    const scale = maxVol / 5;  // VR最大约5, 映射到 maxVol 高度
+    return dataList.map((d, i) => ({
+      volume: d.volume || 0,
+      vr: (i < _vrValues.length && _vrValues[i] != null) ? _vrValues[i] * scale : null,
+    }));
+  }
+});
+
 // 策略曲线: 按 paneId 分组, 同 pane 的多条线合并为一个指标的多 figures
 let registeredStratInds = [];
 function renderStrategyIndicators(r) {
@@ -85,9 +106,12 @@ function renderStrategyIndicators(r) {
   registeredStratInds = [];
   if (!r.indicators || !r.indicators.length) return;
 
+  // 过滤掉 VR (已合并到 VOL_VR 复合指标)
+  const filtered = r.indicators.filter(i => i.name !== 'VR');
+
   // 按 paneId 分组 (main 单独处理)
   const groups = {};
-  r.indicators.forEach(ind => {
+  filtered.forEach(ind => {
     const gid = ind.pane === 'main' ? 'candle_pane' : (ind.paneId || ind.name);
     if (!groups[gid]) groups[gid] = [];
     groups[gid].push(ind);
@@ -125,8 +149,9 @@ function renderStrategyIndicators(r) {
       calc: dataList => dataList.map((d, i) => {
         const row = {};
         inds.forEach(ind => {
-          row[ind.name] = (i < valsMap[ind.name].length && valsMap[ind.name][i] != null)
+          const v = (i < valsMap[ind.name].length && valsMap[ind.name][i] != null)
             ? valsMap[ind.name][i] : null;
+          row[ind.name] = v;
         });
         return row;
       })
@@ -143,6 +168,7 @@ function render(idx){
 
   chart.removeOverlay();
   chart.removeIndicator({ name: 'VOL' });
+  chart.removeIndicator({ name: 'VOL_VR' });
   chart.removeIndicator({ name: 'EQUITY' });
 
   // v10: setSymbol + setPeriod + setDataLoader 三者就绪后触发 getBars
@@ -157,16 +183,37 @@ function render(idx){
         const visibleBars = Math.min(r.candles.length, MAX_BARS);
         const barSpace = Math.max(4, Math.min(50, Math.floor(w / visibleBars)));
         chart.setBarSpace(barSpace);
-        // scrollToDataIndex(n) 将第n根放到右侧边缘，滚动到 fitBars-offset 使首根在左侧
         const fitBars = Math.floor(w / barSpace);
         chart.scrollToDataIndex(Math.min(r.candles.length - 1, fitBars - SCROLL_OFFSET));
+
+        // 四层布局: 主图50% | 成交量15% | 策略20% | 权益15%
+        const totalH = chartEl.clientHeight;
+        const layout = [
+          { id: 'candle_pane', height: Math.floor(totalH * 0.50) },
+          { id: 'vol_pane',    height: Math.floor(totalH * 0.15) },
+          { id: 'strat_strat', height: Math.floor(totalH * 0.20) },
+          { id: 'equity_pane', height: Math.floor(totalH * 0.15) },
+        ];
+        layout.forEach(l => {
+          try { chart.setPaneOptions({ id: l.id, height: l.height }); } catch(e) {}
+        });
       }, 50);
     }
   });
 
-  chart.createIndicator({ name: 'VOL', paneId: 'vol_pane' });
+  // 先提取 VR 值供 VOL_VR 复合指标使用
+  const vrInd = (r.indicators || []).find(i => i.name === 'VR');
+  _vrValues = vrInd ? vrInd.values : [];
 
-  // 策略曲线 (MA均线/唐奇安通道/MACD等, 由策略函数动态提供)
+  chart.createIndicator({
+    name: 'VOL_VR', paneId: 'vol_pane',
+    styles: {
+      bars: [{ upColor: '#ef5350', downColor: '#26a69a', noChangeColor: '#888888' }],
+      lines: [{ color: '#52c41a', style: 'solid', size: 1 }],
+    }
+  });
+
+  // 策略曲线 (MA均线/MACD等, 由策略函数动态提供)
   renderStrategyIndicators(r);
 
   // 权益曲线 (放在所有副图最下方, 紧邻策略收益)
