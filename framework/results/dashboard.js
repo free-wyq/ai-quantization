@@ -77,46 +77,9 @@ klinecharts.registerIndicator({
   }))
 });
 
-// 成交量柱指标 (绑 vol_pane 默认右轴, volume 量纲几亿级)
-// v10 关键: bar figure 带 baseValue:0 + styles 函数按 close/open 涨跌着色
-// 内置 VOL 的 figure key 固定为 "volume", calc 返回 {volume, open, close} 让 styles 判涨跌
-// 叠加 MA5 成交量均线 (同 vol_pane 右轴, 与柱同量纲)
+// 成交量面板用 klinecharts 内置 VOL 指标 (柱按涨跌着色 + MA5/MA10 成交量均线),
+// 不再手写 registerIndicator。配色跟随 setStyles.indicator.bars (涨红跌绿)。
 let _vrValues = [];
-klinecharts.registerIndicator({
-  name: 'VOL_1',
-  shortName: 'VOL',
-  series: 'volume',
-  precision: 0,
-  minValue: 0,
-  figures: [
-    { key: 'volume', title: '成交量: ', type: 'bar', baseValue: 0, styles: (ctx) => {
-        const n = ctx.data.current;
-        const ind = ctx.indicator;
-        const ds = ctx.defaultStyles;
-        let color = ds.bars[0].noChangeColor;
-        const get = (p, d) => {
-          const v = (ind.styles && ind.styles.bars && ind.styles.bars[0] && ind.styles.bars[0][p]);
-          return v !== undefined ? v : d;
-        };
-        if (n && n.close > n.open) color = get('upColor', ds.bars[0].upColor);
-        else if (n && n.close < n.open) color = get('downColor', ds.bars[0].downColor);
-        return { color };
-      } },
-    { key: 'vma5', title: 'MA5: ', type: 'line' }
-  ],
-  calc: dataList => {
-    const vols = dataList.map(d => d.volume || 0);
-    const ma = (p, i) => {
-      if (i < p - 1) return null;
-      let s = 0; for (let j = i - p + 1; j <= i; j++) s += vols[j];
-      return s / p;
-    };
-    return dataList.map((d, i) => ({
-      volume: d.volume || 0, open: d.open, close: d.close,
-      vma5: ma(5, i)
-    }));
-  }
-});
 
 // 量比线指标 (绑 vol_pane 第二条左轴, 独立量纲, 1 上下真实值, 不缩放)
 // 双 Y 机制: 同一 pane 两条 Y 轴 — 右轴成交量柱(几亿), 左轴量比线(1上下)
@@ -201,10 +164,10 @@ function render(idx){
   if (!r) return;
 
   chart.removeOverlay();
-  chart.removeIndicator({ name: 'VOL_1' });
   chart.removeIndicator({ name: 'VR_LINE' });
   chart.removeIndicator({ name: 'EQUITY' });
-  // 内置指标: MACD/DIF/DEA + ADX(DMI), 每次切换 run 先清掉再重建
+  // 内置指标: VOL(成交量+MA) / MACD / DMI(ADX), 每次切换 run 先清掉再重建
+  chart.removeIndicator({ name: 'VOL' });
   chart.removeIndicator({ name: 'MACD' });
   chart.removeIndicator({ name: 'DMI' });
 
@@ -243,22 +206,11 @@ function render(idx){
   const vrInd = (r.indicators || []).find(i => i.name === 'VR');
   _vrValues = vrInd ? vrInd.values : [];
 
-  // 自定义 VOL_1: 成交量柱 (柱子按K线涨跌着色, 绑 vol_pane 默认右轴) + MA5 成交量均线
-  // v10: styles 走 bars[0].upColor/downColor, figure styles 函数会读它们
+  // 内置 VOL 指标: 成交量柱 (按涨跌着色) + MA5/MA10 成交量均线, 绑 vol_pane 默认右轴
+  // calcParams 控制均线周期, 主题色跟随 setStyles.indicator.bars (涨红跌绿)
   chart.createIndicator({
-    name: 'VOL_1', paneId: 'vol_pane',
-    styles: {
-      bars: [{
-        upColor: '#ef5350',
-        downColor: '#26a69a',
-        noChangeColor: '#888888'
-      }],
-      // MA5 成交量均线: 浅色实线 (lines[1] 对应第二个 figure vma5)
-      lines: [
-        { color: 'transparent', style: 'solid', size: 0 },
-        { color: '#faad14', style: 'solid', size: 1 }
-      ]
-    }
+    name: 'VOL', paneId: 'vol_pane',
+    calcParams: [5, 10]
   });
 
   // 双 Y 机制: 在 vol_pane 再建一条左轴, 专供量比线(1上下独立量纲)
