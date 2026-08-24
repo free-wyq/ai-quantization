@@ -11,7 +11,9 @@ def strategy_result(request, sample_df):
     """参数化: 对每个策略跑一遍 run(), 返回 (key, entries, exits, indicators)"""
     key = request.param
     strategy = STRATS[key]()
-    entries, exits, indicators = strategy.run(sample_df)
+    result = strategy.run(sample_df)
+    # run() 返回固定 5 元组 (entries, exits, indicators, size, reasons)
+    entries, exits, indicators = result[0], result[1], result[2]
     return key, entries, exits, indicators, sample_df
 
 

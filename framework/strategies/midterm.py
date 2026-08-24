@@ -21,7 +21,7 @@ import sys
 
 import pandas as pd
 import numpy as np
-from .base import Strategy, series_to_list
+from framework.strategies.base import Strategy, series_to_list, SignalResult
 from data import sectors as sec
 from data.fetcher import fetch_stock_history
 from config.settings import DATA_DIR
@@ -132,7 +132,7 @@ class MidTermStrategy(Strategy):
         "use_size": False,
     }
 
-    def run(self, df: pd.DataFrame):
+    def generate(self, df: pd.DataFrame) -> SignalResult:
         n = len(df)
         p = self.params
 
@@ -211,27 +211,12 @@ class MidTermStrategy(Strategy):
         wk_long, _, _ = weekly_kdj(df)
         ma60_up, ma60 = ma_trend(df, 60)
         vol_ok, _ = volume_ratio(df, min_ratio=p["vol_min"], lookback=p["vol_lookback"])
-        # 显示用: 量比值序列 (基类公共口径, 1上下真实值, 供看板双Y轴左轴)
-        vr_ratio = self.compute_volume_ratio(df)
         atr_s = atr(df, p["atr"])
-        close = df["close"].astype(float)
-        ma5 = close.rolling(5).mean()
-        ma10 = close.rolling(10).mean()
-        ma20 = close.rolling(20).mean()
+        # MA5/10/20/60 + 量比(VR) 由基类 run() 统一组装, 这里只放特色指标
         indicators = [
-            # 主图: 均线 + ATR止损
-            {"name": "MA5", "shortName": "MA5", "pane": "main", "paneId": "main",
-             "color": "#faad14", "values": series_to_list(ma5, n)},
-            {"name": "MA10", "shortName": "MA10", "pane": "main", "paneId": "main",
-             "color": "#13c2c2", "values": series_to_list(ma10, n)},
-            {"name": "MA20", "shortName": "MA20", "pane": "main", "paneId": "main",
-             "color": "#722ed1", "values": series_to_list(ma20, n)},
-            {"name": "MA60", "shortName": "MA60", "pane": "main", "paneId": "main",
-             "color": "#f5222d", "values": series_to_list(ma60, n)},
+            # 主图: ATR止损线
             {"name": "ATRstop", "shortName": "ATR止损", "pane": "main", "paneId": "main",
              "color": "#fa8c16", "lineStyle": "dashed", "values": series_to_list(stop_line, n)},
-            # 成交量副图: 量比 (基类 vr_indicator, name='VR' 看板契约)
-            self.vr_indicator(vr_ratio, n),
             # 策略副图: MACD
             {"name": "DIF", "shortName": "DIF", "pane": "separate", "paneId": "strat",
              "color": "#ffa940", "values": series_to_list(dif, n)},
@@ -249,8 +234,8 @@ class MidTermStrategy(Strategy):
         if p["use_size"]:
             adx_s, _, _ = adx(df, p["adx"])
             size = self._compute_size(df, entries, exits, atr_s, adx_s, p)
-            return entries.fillna(False), exits.fillna(False), indicators, size, reasons
-        return entries.fillna(False), exits.fillna(False), indicators, reasons
+            return SignalResult(entries.fillna(False), exits.fillna(False), indicators, reasons, size)
+        return SignalResult(entries.fillna(False), exits.fillna(False), indicators, reasons, None)
 
     def _build_reasons(self, df, entries, exits, stop_line,
                        macd_bull, wk_long, ma60_up, vol_ok,

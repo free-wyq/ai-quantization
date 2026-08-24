@@ -1,20 +1,52 @@
-"""策略基类与工具函数"""
+"""策略基类与工具函数
+
+设计 (模板方法模式):
+  - run(df) 是模板骨架, 子类一般不重写。它组装公共指标 (MA均线系统 + 量比),
+    再调子类的 generate(df) 钩子拿信号 + 特色指标 + 原因 + 仓位, 统一返回 5 元组。
+  - generate(df) 是子类唯一需实现的钩子, 返回 SignalResult。
+  - 公共指标 (MA系统/量比) 上提到基类, 保证口径一致 + 看板契约 (name='VR' 等);
+    各策略特色指标 (MACD/KDJ 等) 才由子类自行实现。
+
+三层分离铁律: 策略只算信号, 绝不自己跑回测 (回测在 run.py / batch_backtest.py)。
+"""
+
+from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 
+# 主图均线系统配置: (周期, 颜色)。所有策略共享同一套主图均线显示。
+# 子类可覆盖 MA_LINES 类属性自定义周期/颜色 (如 [(20,'#fff')] 只画一条)。
+MA_LINES = [(5, "#faad14"), (10, "#13c2c2"), (20, "#722ed1"), (60, "#f5222d")]
+
+
+@dataclass
+class SignalResult:
+    """generate() 的返回值 — 子类产出的信号与特色部分。
+
+    公共指标 (MA系统/量比) 由基类 run() 组装, 子类的 indicators 只放特色指标
+    (如 MACD的DIF/DEA、ATR止损线), 不含 MA5/10/20/60 与 VR。
+    """
+    entries: pd.Series
+    exits: pd.Series
+    indicators: list = field(default_factory=list)   # 特色指标 dict 列表
+    reasons: dict | None = None                       # {buy_reasons, sell_reasons}; None=无标注
+    size: pd.Series | None = None                     # 仓位比例 Series; None=等权满仓
+
+
 class Strategy:
-    """策略基类: 自研策略继承此类，实现 run() 方法即可。
+    """策略基类: 自研策略继承此类, 实现 generate() 方法即可。
 
     使用方式:
-        1. 在 strategies/custom/ 下新建 .py 文件
-        2. 定义 Strategy 子类，设置 name/label/params
-        3. 实现 run(df) 方法，返回 (entries, exits, indicators)
-        4. 框架自动发现并注册，无需修改任何框架代码
+        1. 在 strategies/ (或 custom/) 下新建 .py 文件
+        2. 定义 Strategy 子类, 设置 name/label/params (可覆盖 MA_LINES)
+        3. 实现 generate(df) 方法, 返回 SignalResult
+        4. 框架自动发现并注册, 无需修改任何框架代码
 
     示例::
 
@@ -23,66 +55,87 @@ class Strategy:
             label = "我的策略"
             params = {"period": 14}
 
-            def run(self, df):
+            def generate(self, df):
                 close = df["close"]
-                n = len(df)
-                p = self.params
-                ma = close.rolling(p["period"]).mean()
+                ma = close.rolling(self.params["period"]).mean()
                 entries = close > ma
                 exits = close < ma
                 indicators = [
-                    {"name": "MA", "shortName": "MA", "pane": "separate", "paneId": "ma",
-                     "color": "#ffa940", "values": series_to_list(ma, n)},
+                    {"name": "MA", "shortName": "MA", "pane": "main", "paneId": "main",
+                     "color": "#ffa940", "values": series_to_list(ma, len(df))},
                 ]
-                return entries.fillna(False), exits.fillna(False), indicators
+                return SignalResult(entries, exits, indicators)
     """
 
     name = "base"
     label = "基础策略"
-    params = {}
+    params: dict = {}
+    # 主图均线配置, 子类可覆盖
+    MA_LINES = MA_LINES
 
     def __init__(self, **overrides):
-        # 拷贝 params，避免修改类属性
+        # 拷贝 params, 避免修改类属性
         self.params = dict(self.params)
         for k, v in overrides.items():
             if k in self.params:
                 self.params[k] = v
             else:
-                warnings.warn(f"策略 {self.name} 无参数 '{k}'，已忽略", stacklevel=2)
+                warnings.warn(f"策略 {self.name} 无参数 '{k}', 已忽略", stacklevel=2)
 
-    def run(self, df: pd.DataFrame) -> tuple[pd.Series, pd.Series, list[dict[str, Any]]] | tuple[pd.Series, pd.Series, list[dict[str, Any]], pd.Series]:
-        """计算策略信号与指标
-
-        Args:
-            df: K线数据, 含 open/high/low/close/volume 列, 每行代表一个交易日
+    # ---- 模板骨架: 子类一般不重写 ----
+    def run(self, df: pd.DataFrame) -> tuple:
+        """模板方法: 组装公共指标 + 调子类 generate(), 返回固定 5 元组。
 
         Returns:
-            (entries, exits, indicators)  或  (entries, exits, indicators, size)
-            entries: 布尔 Series (与 df 等长), True 表示该日触发买入信号
-            exits:   布尔 Series (与 df 等长), True 表示该日触发平仓信号
-            indicators: 指标列表, 每项是一条可视化曲线, 结构如下:
-                {
-                    "name": str,            # 唯一标识, 如 "MA5"
-                    "shortName": str,       # 图例显示名, 如 "MA5"
-                    "pane": str,            # "main" 叠加在K线上 / "separate" 独立副图
-                    "paneId": str,          # 仅 separate 有效, 相同 paneId 共享一个副图
-                    "color": str,           # 线条颜色, 如 "#ffa940"
-                    "lineStyle": str,       # 可选: "solid"(实线) / "dashed"(虚线), 默认 solid
-                    "lineWidth": int,       # 可选: 线宽, 默认 1
-                    "type": str,            # 可选: "line"(折线) / "bar"(柱状), 默认 line
-                    "values": list[float|None],  # 与 df 等长的数值序列, NaN 用 None
-                }
-            size:     [可选] 布尔 Series 或 float Series, 每笔买入的仓位比例(0~1)。
-                      - None 或省略 → 引擎等权满仓 (老策略默认)
-                      - 与 entries 等长的 Series → 仅在 entry 当日读取该值作为仓位
+            (entries, exits, indicators, size, reasons)
+            - entries/exits: 布尔 Series (与 df 等长, fillna(False))
+            - indicators: 公共(MA系统+量比) + 特色(generate 返回)
+            - size: 仓位 Series 或 None (等权满仓)
+            - reasons: {buy_reasons, sell_reasons} 或 None
+        """
+        n = len(df)
+        res = self.generate(df)
+
+        # 公共指标: 主图均线系统 + 量比副图 (看板双Y轴左轴契约 name='VR')
+        indicators = self.ma_indicators(df, n)
+        indicators.append(self.vr_indicator(self.compute_volume_ratio(df), n))
+        indicators.extend(res.indicators)
+
+        return (
+            res.entries.fillna(False),
+            res.exits.fillna(False),
+            indicators,
+            res.size,
+            res.reasons,
+        )
+
+    def generate(self, df: pd.DataFrame) -> SignalResult:
+        """子类钩子: 产出信号 + 特色指标 + 原因 + 仓位。
+
+        返回 SignalResult。公共指标 (MA系统/量比) 由基类 run() 组装, 此处只放特色指标。
         """
         raise NotImplementedError
 
-    # ---- 公共指标计算 (模板方法: 所有策略共享, 保证看板契约一致) ----
-    # 设计: K线/成交量柱由看板渲染层统一画, 不进策略 indicators;
-    #       量比(VR)是跨策略通用的市场结构指标, 计算口径与指标结构上提到基类,
-    #       子类调用即可获得一致的量比线, 避免各策略手写 dict / 口径漂移;
-    #       各策略特色指标 (MACD/RSI/KDJ 等) 才由子类自行实现。
+    # ---- 公共指标计算 ----
+    def ma_series(self, df: pd.DataFrame, period: int) -> pd.Series:
+        """单条简单移动平均线 (SMA)。"""
+        return df["close"].astype(float).rolling(period).mean()
+
+    def ma_indicators(self, df: pd.DataFrame, n: int) -> list:
+        """主图均线系统指标 dict 列表, 按 self.MA_LINES 配置生成。
+
+        所有策略共享同一套主图均线显示, 口径统一 (SMA, rolling period)。
+        """
+        out = []
+        for period, color in self.MA_LINES:
+            ma = self.ma_series(df, period)
+            out.append({
+                "name": f"MA{period}", "shortName": f"MA{period}",
+                "pane": "main", "paneId": "main",
+                "color": color, "values": series_to_list(ma, n),
+            })
+        return out
+
     def compute_volume_ratio(self, df: pd.DataFrame, window: int = 20) -> pd.Series:
         """量比值序列 = 当日成交量 / 过去 window 日均量。
 
@@ -97,7 +150,6 @@ class Strategy:
 
         name 固定为 'VR' —— 这是与 dashboard.js 的显式契约:
         vol_pane 双 Y 轴左轴通过 find(name==='VR') 提取量比值渲染, name 不符则量比线不显示。
-        子类在 indicators 列表里 append 本方法返回值即可获得量比线。
         ratio 应来自 compute_volume_ratio (或等价计算)。
         """
         return {"name": "VR", "shortName": "量比", "pane": "separate", "paneId": "vol",
@@ -107,7 +159,6 @@ class Strategy:
                              buy_reason: str, sell_reason: str) -> dict:
         """从信号 Series 构建买卖原因 dict (供 _export_result 在看板标注成交原因)。
 
-        策略返回四元组 (entries, exits, indicators, reasons) 即可让看板显示每笔交易的原因。
         entries/exits 应是最终返回的 Series (经 fillna 等), 时间戳与 vectorbt 成交记录对齐。
         """
         buy_reasons, sell_reasons = {}, {}

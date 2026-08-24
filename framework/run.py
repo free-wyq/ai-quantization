@@ -2,10 +2,10 @@
 
 用法:
     python framework/run.py [策略] [股票代码] [-p key=value ...]
-    python framework/run.py turtle 000001
-    python framework/run.py ma 000001 -p fast=10 slow=30
-    python framework/run.py regime 000001 --sl 5 --tp 10
-    python framework/run.py ma 000001 --optimize
+    python framework/run.py midterm 000001
+    python framework/run.py midterm 000001 -p vol_min=1.5
+    python framework/run.py midterm 000001 --sl 5 --tp 10
+    python framework/run.py midterm 000001 --optimize
     python framework/run.py --list
 
 自研策略: 在 framework/strategies/custom/ 下新建 .py 文件,
@@ -135,10 +135,7 @@ def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: 
             reasons = item
             break
 
-    # 2.1 公共指标兜底: 量比(VR) 是看板双Y轴左轴的契约指标 (dashboard.js 按 name==='VR' 提取)。
-    # 策略类提供 compute_volume_ratio/vr_indicator, 但老策略未必调用 — 这里保证所有回测都有量比线。
-    if not any(i.get("name") == "VR" for i in indicators):
-        indicators.append(strategy.vr_indicator(strategy.compute_volume_ratio(df), len(df)))
+    # 2.1 量比(VR) 等公共指标现由基类 Strategy.run() 统一组装 (name='VR' 看板双Y轴契约)。
 
     # 3. 向量化回测: A股成本模型 (佣金+印花税+滑点), 初始资金10万, 满仓做多
     pf = vbt.Portfolio.from_signals(
@@ -246,7 +243,7 @@ if __name__ == "__main__":
             print(f"  {key:16s} {cls.label:16s} 参数: {params_str}")
         sys.exit(0)
 
-    # 解析参数覆盖: ["ma_slow=30", "rsi_period=21"] -> {"ma_slow": 30, "rsi_period": 21}
+    # 解析参数覆盖: ["vol_min=1.5", "atr=20"] -> {"vol_min": 1.5, "atr": 20}
     overrides = {}
     for item in args.params:
         if "=" in item:

@@ -1,8 +1,8 @@
-"""批量回测: 7策略 x 30股票, 默认参数, train/test拆分检测过拟合
+"""批量回测: 策略 x 30股票, 默认参数, train/test拆分检测过拟合
 
 用法:
     python framework/batch_backtest.py
-    python framework/batch_backtest.py --strategies ma rsi
+    python framework/batch_backtest.py --strategies midterm
     python framework/batch_backtest.py --split 0.7
 
 输出:
@@ -255,7 +255,7 @@ def print_ranking(agg_df):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="批量回测: 7策略 x 30股票")
+    parser = argparse.ArgumentParser(description="批量回测: 策略 x 30股票")
     parser.add_argument("--strategies", nargs="*", default=None,
                         help="指定策略 (默认全部)")
     parser.add_argument("--split", type=float, default=0.7,

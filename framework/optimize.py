@@ -1,8 +1,7 @@
 """参数优化器: 网格搜索 + 样本外验证
 
 用法:
-    python framework/run.py ma 000001 --optimize
-    python framework/run.py regime 000001 --optimize
+    python framework/run.py midterm 000001 --optimize
 
 流程:
     1. 将数据按 7:3 拆分为训练集 / 测试集
@@ -26,13 +25,6 @@ from framework.strategies import STRATS
 
 # ===== 各策略参数搜索网格 =====
 PARAM_GRIDS = {
-    "ma":      {"fast": [3, 5, 10], "slow": [10, 20, 30, 60]},
-    "macd":    {"fast": [8, 12, 16], "slow": [20, 26, 30], "signal": [7, 9, 11]},
-    "adx":     {"period": [10, 14, 20], "threshold": [20, 25, 30]},
-    "rsi":     {"period": [7, 14, 21], "oversold": [30, 35, 40], "overbought": [60, 65, 70]},
-    "obv":     {"ma_period": [10, 15, 20, 30]},
-    "regime":  {"trend_threshold": [20, 25, 30], "range_threshold": [15, 20, 25]},
-    "turtle":  {"entry": [10, 15, 20, 30], "exit": [5, 10, 15, 20]},
     "midterm": {
         "ma_period": [10, 20, 30],
         "vol_min": [1.0, 1.2, 1.5],
