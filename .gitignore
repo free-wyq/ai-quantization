@@ -20,7 +20,6 @@ env/
 *.swp
 
 # 数据文件
-data/
 *.csv
 *.db
 *.sqlite
