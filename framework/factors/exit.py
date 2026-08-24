@@ -2,47 +2,32 @@
 
 ADX 不指示方向, 仅度量趋势强度; ATR 度量波动幅度。
 两者组合用于: 决定止损宽度 (强趋势宽止损) 与仓位系数 (见 strategies/midterm.py)。
+
+ATR/ADX 用 ta 库的 Wilder 平滑 (标准定义), 与看板 klinecharts 内置 DMI/VOL 同源。
 """
 from __future__ import annotations
 
 import pandas as pd
 import numpy as np
-
-
-def _true_range(df: pd.DataFrame) -> pd.Series:
-    high = df["high"].astype(float)
-    low = df["low"].astype(float)
-    close = df["close"].astype(float)
-    prev_close = close.shift(1)
-    tr = pd.concat([
-        (high - low),
-        (high - prev_close).abs(),
-        (low - prev_close).abs(),
-    ], axis=1).max(axis=1)
-    return tr
+from ta.trend import ADXIndicator
+from ta.volatility import AverageTrueRange
 
 
 def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    """平均真实波幅 (F14 基础)。"""
-    return _true_range(df).rolling(period).mean()
-
-
-def adx(df: pd.DataFrame, period: int = 14):
-    """返回 (ADX, +DI, -DI)。ADX 度量趋势强度 (无方向)。"""
+    """平均真实波幅 (F14 基础)。ta 库 Wilder 平滑 (标准 ATR)。"""
     high = df["high"].astype(float)
     low = df["low"].astype(float)
     close = df["close"].astype(float)
-    prev_high = high.shift(1)
-    prev_low = low.shift(1)
-    plus_dm = (high - prev_high).clip(lower=0.0)
-    minus_dm = (prev_low - low).clip(lower=0.0)
-    tr = _true_range(df)
-    atr_ = tr.rolling(period).mean()
-    plus_di = 100.0 * (plus_dm.rolling(period).mean() / atr_)
-    minus_di = 100.0 * (minus_dm.rolling(period).mean() / atr_)
-    dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di)
-    adx_ = dx.rolling(period).mean()
-    return adx_, plus_di, minus_di
+    return AverageTrueRange(high, low, close, window=period, fillna=False).average_true_range()
+
+
+def adx(df: pd.DataFrame, period: int = 14):
+    """返回 (ADX, +DI, -DI)。ta 库 Wilder 平滑 (标准 ADX), 度量趋势强度 (无方向)。"""
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+    close = df["close"].astype(float)
+    i = ADXIndicator(high, low, close, window=period, fillna=False)
+    return i.adx(), i.adx_pos(), i.adx_neg()
 
 
 def trailing_stop_exits(df, entries, atr_series, adx_series,
@@ -65,6 +50,8 @@ def trailing_stop_exits(df, entries, atr_series, adx_series,
     n = len(df)
     base_mult = pd.Series(np.where(adx_series >= adx_thresh, mult_strong, mult_weak),
                           index=df.index).astype(float)
+    # ta 库 ATR warmup 段为 NaN, 填 0 防 NaN 传播 (warmup 段止损线取 highest, 即无 ATR 缓冲)
+    atr_safe = atr_series.fillna(0.0)
     stop_line = pd.Series(np.nan, index=df.index)
     exits = pd.Series(False, index=df.index)
     in_pos = False
@@ -76,7 +63,7 @@ def trailing_stop_exits(df, entries, atr_series, adx_series,
             in_pos = True
             highest = float(close.iloc[i])
             entry_px = float(close.iloc[i])
-            prev_stop = highest - base_mult.iloc[i] * float(atr_series.iloc[i])
+            prev_stop = highest - base_mult.iloc[i] * float(atr_safe.iloc[i])
             stop_line.iloc[i] = prev_stop
         elif in_pos:
             highest = max(highest, float(close.iloc[i]))
@@ -87,7 +74,7 @@ def trailing_stop_exits(df, entries, atr_series, adx_series,
                 for pct, m in sorted(profit_tighten, key=lambda x: x[0]):
                     if profit_pct >= pct:
                         current_mult = m
-            new_stop = highest - current_mult * float(atr_series.iloc[i])
+            new_stop = highest - current_mult * float(atr_safe.iloc[i])
             # 最大回撤止盈: 从最高价回落超过 max_retracement 也触发退出
             if max_retracement is not None:
                 retracement_stop = highest * (1 - max_retracement)

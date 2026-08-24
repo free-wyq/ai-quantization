@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
+from ta.trend import MACD
+from ta.momentum import StochasticOscillator
 from framework.strategies.base import Strategy, series_to_list, SignalResult
 from framework.factors.exit import build_exits, adx, volume_divergence_exits
 
@@ -17,13 +19,11 @@ from framework.factors.exit import build_exits, adx, volume_divergence_exits
 def _macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9):
     """MACD 多头状态 (F10)。返回 (多头布尔, DIF, DEA)。
 
-    多头状态 = DIF > DEA, 从金叉持续到死叉 (非单日事件)。
+    用 ta 库 MACD (标准 EMA 口径)。多头状态 = DIF > DEA, 从金叉持续到死叉 (非单日事件)。
     """
     close = df["close"].astype(float)
-    ema_fast = close.ewm(span=fast, adjust=False).mean()
-    ema_slow = close.ewm(span=slow, adjust=False).mean()
-    dif = ema_fast - ema_slow
-    dea = dif.ewm(span=signal, adjust=False).mean()
+    m = MACD(close, window_slow=slow, window_fast=fast, window_sign=signal, fillna=False)
+    dif, dea = m.macd(), m.macd_signal()
     macd_bull = (dif > dea).fillna(False)
     return macd_bull, dif, dea
 
@@ -31,17 +31,14 @@ def _macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9):
 def _weekly_kdj(df: pd.DataFrame, n: int = 9, k_period: int = 3, d_period: int = 3):
     """周线 KDJ。返回 (周线多头布尔(日度ffill), K, D)。
 
-    周线多头状态 (K>D) 作为方向过滤; 日线 MACD 金叉作为具体买点。
+    用 ta 库 StochasticOscillator。周线多头状态 (K>D) 作为方向过滤;
+    日线 MACD 金叉作为具体买点。周线重采样到日度 (ffill)。
     """
     w_close = df["close"].resample("W").last().astype(float)
     w_high = df["high"].resample("W").max().astype(float)
     w_low = df["low"].resample("W").min().astype(float)
-    low_n = w_low.rolling(n).min()
-    high_n = w_high.rolling(n).max()
-    rsv = (w_close - low_n) / (high_n - low_n) * 100.0
-    rsv = rsv.fillna(50.0)
-    K = rsv.ewm(alpha=1.0 / k_period, adjust=False).mean()
-    D = K.ewm(alpha=1.0 / d_period, adjust=False).mean()
+    s = StochasticOscillator(w_high, w_low, w_close, window=n, smooth_window=k_period, fillna=False)
+    K, D = s.stoch(), s.stoch_signal()
     weekly_long = (K > D)
     daily_long = weekly_long.reindex(df.index, method="ffill").fillna(False)
     return daily_long.astype(bool), K, D
