@@ -236,6 +236,10 @@ class MidTermStrategy(Strategy):
         "leader_top": 3, "leader_turnover_min": 1.0, "leader_turnover_max": 30.0,
         # 资金面共振 (默认全关, 开启需联网 akshare 东财; 取数失败自动降级跳过)
         "use_northbound": False, "use_main_flow": False,
+        # 基本面排雷 (默认全关, 开启需联网 akshare 百度估值+新浪财务; 取数失败自动降级跳过)
+        "use_valuation": False, "use_quality": False, "use_goodwill": False,
+        "pe_pct_max": 80.0, "pb_pct_max": 80.0,
+        "roe_min": 8.0, "gw_ratio_max": 30.0, "valuation_lookback": 1250,
     }
 
     def generate(self, df: pd.DataFrame) -> SignalResult:
@@ -282,6 +286,23 @@ class MidTermStrategy(Strategy):
             except Exception:
                 pass
 
+        # --- 基本面排雷 (PE/PB分位/ROE/商誉, 默认全关; 开启需 akshare 百度+新浪, 降级自动跳过) ---
+        val_ok = qual_ok = gw_ok = None
+        if p.get("use_valuation") or p.get("use_quality") or p.get("use_goodwill"):
+            try:
+                from framework.factors.fundamental import get_fundamental_factors as _gffd
+                sym = str(df["symbol"].iloc[0]) if "symbol" in df.columns else ""
+                fd = _gffd(sym, df.index,
+                           lookback=p.get("valuation_lookback", 1250),
+                           pe_max=p.get("pe_pct_max", 80.0), pb_max=p.get("pb_pct_max", 80.0),
+                           roe_min=p.get("roe_min", 8.0), gw_ratio_max=p.get("gw_ratio_max", 30.0))
+                if fd is not None:
+                    val_ok = fd["valuation"]
+                    qual_ok = fd["quality"]
+                    gw_ok = fd["goodwill"]
+            except Exception:
+                pass
+
         # --- 入场信号: MACD多头 & 周KDJ多头 & MA向上 & 量比放大 & ADX趋势强 ---
         entries = macd_bull.copy()
         if not p["no_weekly"]:
@@ -304,6 +325,13 @@ class MidTermStrategy(Strategy):
             entries = entries & nb_ok
         if p.get("use_main_flow") and mf_ok is not None:
             entries = entries & mf_ok
+        # 基本面排雷 (默认关; 开启且数据可用时叠加, 数据不全默认放行)
+        if p.get("use_valuation") and val_ok is not None:
+            entries = entries & val_ok
+        if p.get("use_quality") and qual_ok is not None:
+            entries = entries & qual_ok
+        if p.get("use_goodwill") and gw_ok is not None:
+            entries = entries & gw_ok
         entries = entries.fillna(False)
 
         # --- 退出 ---
