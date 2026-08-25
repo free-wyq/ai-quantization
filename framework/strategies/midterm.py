@@ -234,6 +234,8 @@ class MidTermStrategy(Strategy):
         # 跨股票过滤层 (默认全关, 开启需 data/ 下全市场数据; 数据不全自动降级跳过)
         "use_gate": False, "use_sector_strong": False, "use_leader": False,
         "leader_top": 3, "leader_turnover_min": 1.0, "leader_turnover_max": 30.0,
+        # 资金面共振 (默认全关, 开启需联网 akshare 东财; 取数失败自动降级跳过)
+        "use_northbound": False, "use_main_flow": False,
     }
 
     def generate(self, df: pd.DataFrame) -> SignalResult:
@@ -267,6 +269,19 @@ class MidTermStrategy(Strategy):
             except Exception:
                 pass
 
+        # --- 资金面因子 (北向/主力净流入, 默认全关; 开启需 akshare 东财, 降级自动跳过) ---
+        nb_ok = mf_ok = None
+        if p.get("use_northbound") or p.get("use_main_flow"):
+            try:
+                from framework.factors.flow import get_flow_factors as _gff
+                sym = str(df["symbol"].iloc[0]) if "symbol" in df.columns else ""
+                fl = _gff(sym, df.index)
+                if fl is not None:
+                    nb_ok = fl["northbound"]
+                    mf_ok = fl["main_flow"]
+            except Exception:
+                pass
+
         # --- 入场信号: MACD多头 & 周KDJ多头 & MA向上 & 量比放大 & ADX趋势强 ---
         entries = macd_bull.copy()
         if not p["no_weekly"]:
@@ -284,6 +299,11 @@ class MidTermStrategy(Strategy):
             entries = entries & sector_strong_ok
         if p.get("use_leader") and leader_ok is not None:
             entries = entries & leader_ok
+        # 资金面共振 (默认关; 开启且数据可用时叠加, 数据不全默认放行)
+        if p.get("use_northbound") and nb_ok is not None:
+            entries = entries & nb_ok
+        if p.get("use_main_flow") and mf_ok is not None:
+            entries = entries & mf_ok
         entries = entries.fillna(False)
 
         # --- 退出 ---
