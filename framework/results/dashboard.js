@@ -4,10 +4,24 @@ const chartEl = document.getElementById('chart');
 const metricsEl = document.getElementById('metrics');
 const tradesBody = document.querySelector('#trades tbody');
 
+let currentIdx = 0;
+let currentPeriod = 'day';   // 'day' | 'week' | 'month'
+
 RUNS.forEach((r, i) => {
   const o = document.createElement('option');
   o.value = i; o.textContent = r.label; sel.appendChild(o);
 });
+
+// 周期切换器 (JS 注入, 不改 dashboard.html): 日线 / 周线 / 月线
+const periodSel = document.createElement('select');
+periodSel.id = 'period';
+periodSel.style.minWidth = '0';
+periodSel.style.width = '90px';
+[['day','日线'],['week','周线'],['month','月线']].forEach(([v,t])=>{
+  const o=document.createElement('option'); o.value=v; o.textContent=t; periodSel.appendChild(o);
+});
+sel.parentNode.insertBefore(periodSel, sel.nextSibling);
+periodSel.addEventListener('change', e=>{ currentPeriod=e.target.value; render(currentIdx); });
 
 function fmt(n, d=2){ return Number(n).toLocaleString('zh-CN',{minimumFractionDigits:d,maximumFractionDigits:d}); }
 function cls(v){ return v>=0 ? 'pos' : 'neg'; }
@@ -141,9 +155,84 @@ function renderStrategyIndicators(r) {
   });
 }
 
+/* ---- 周期重采样: 日线 → 周/月线 (纯前端聚合, 不改后端) ---- */
+
+// 按 ISO 周 / 自然月给每根日 bar 打分组 key
+function periodKey(ts, period){
+  const d = new Date(ts);
+  if (period === 'month') return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0');
+  // ISO 周: 用周四定位所属周 (getUTCDate + 3 - getUTCDay), 周日=0→化为周一=0 口径
+  const thu = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 3 - (d.getUTCDay()||7)));
+  const year = thu.getUTCFullYear();
+  const week1Thu = new Date(Date.UTC(year, 0, 4));
+  const week = 1 + Math.round(((thu - week1Thu) / 86400000 - 3 + (week1Thu.getUTCDay()||7)) / 7);
+  return year + '-W' + String(week).padStart(2,'0');
+}
+
+// 将日级 run 数据按 period 重采样为周/月视图。period==='day' 时原样返回 (零开销, 保留现状)。
+function buildView(r0, period){
+  if (period === 'day' || !r0.candles || r0.candles.length === 0) return r0;
+
+  // 分组: 连续相同 key 的日 bar 归为一组, 记录组内日线索引
+  const groups = [];      // number[][] — 每组是日线索引数组
+  const dailyToGroup = new Array(r0.candles.length);  // 日线索引 → 组索引
+  let prevKey = null;
+  r0.candles.forEach((c, i) => {
+    const k = periodKey(c.timestamp, period);
+    if (k !== prevKey) { groups.push([]); prevKey = k; }
+    const gi = groups.length - 1;
+    groups[gi].push(i);
+    dailyToGroup[i] = gi;
+  });
+
+  // 聚合 candles: open=组首, high=max, low=min, close=组末, volume=sum, ts=组首
+  const candles = groups.map(idx => {
+    const first = r0.candles[idx[0]];
+    const last  = r0.candles[idx[idx.length-1]];
+    let hi = -Infinity, lo = Infinity, vol = 0;
+    idx.forEach(j => {
+      hi = Math.max(hi, r0.candles[j].high);
+      lo = Math.min(lo, r0.candles[j].low);
+      vol += r0.candles[j].volume;
+    });
+    return { timestamp: first.timestamp, open: first.open, high: hi, low: lo,
+             close: last.close, volume: vol };
+  });
+
+  // 指标 values 每组取组末值 (该周/月最后一日的值; MA/ATRstop 均取周末生效值)
+  const indicators = (r0.indicators||[]).map(ind => {
+    const vals = groups.map(idx => {
+      const lastIdx = idx[idx.length-1];
+      return (lastIdx < ind.values.length) ? ind.values[lastIdx] : null;
+    });
+    return { ...ind, values: vals };
+  });
+
+  // 权益每组取组末 value, ts 换成组首 (对齐 candles 索引, 供 EQUITY calc 用)
+  const equity = groups.map(idx => {
+    const lastIdx = idx[idx.length-1];
+    const e = (r0.equity && lastIdx < r0.equity.length) ? r0.equity[lastIdx] : null;
+    return { timestamp: r0.candles[idx[0]].timestamp, value: e ? e.value : null };
+  });
+
+  // 买卖点: trade.ts → 日线索引 → 组索引 → 组首 bar ts (让 overlay 落在正确的周/月 bar)
+  const tsToDaily = {};
+  r0.candles.forEach((c, i) => { tsToDaily[c.timestamp] = i; });
+  const remap = arr => arr.map(p => {
+    const di = tsToDaily[p.timestamp];
+    const gi = (di != null) ? dailyToGroup[di] : -1;
+    const newTs = (gi >= 0) ? candles[gi].timestamp : p.timestamp;
+    return { ...p, timestamp: newTs };
+  });
+
+  return { ...r0, candles, indicators, equity, buys: remap(r0.buys||[]), sells: remap(r0.sells||[]) };
+}
+
 function render(idx){
-  const r = RUNS[idx];
-  if (!r) return;
+  currentIdx = idx;
+  const r0 = RUNS[idx];
+  if (!r0) return;
+  const r = buildView(r0, currentPeriod);   // 重采样视图 (日线时 === r0)
 
   chart.removeOverlay();
   chart.removeIndicator({ name: 'EQUITY' });
@@ -154,7 +243,7 @@ function render(idx){
 
   // v10: setSymbol + setPeriod + setDataLoader 三者就绪后触发 getBars
   chart.setSymbol({ ticker: r.symbol });
-  chart.setPeriod({ type: 'day', span: 1 });
+  chart.setPeriod({ type: currentPeriod, span: 1 });
   chart.setDataLoader({
     getBars: ({ callback }) => {
       callback(r.candles, false);
@@ -205,12 +294,12 @@ function render(idx){
     styles: { lines: [{ color: '#1f77b4', style: 'solid', size: 1.5 }] }
   });
 
-  // 买卖点标注
+  // 买卖点标注 (用重采样视图 r: ts 已 remap 到周/月 bar)
   r.buys.forEach(p => addAnnotation(p, 'B', '#ff4d4f'));
   r.sells.forEach(p => addAnnotation(p, 'S', '#00c853'));
 
-  // 指标卡片
-  const m = r.metrics;
+  // 指标卡片 + 交易明细表: 用原始日线 r0 (周期无关 — 交易日仍是日级事实, metrics 是回测总计)
+  const m = r0.metrics;
   const cards = [
     ['策略收益率', sign(m.total_return)+fmt(m.total_return)+'%', cls(m.total_return)],
     ['基准收益率', fmt(m.benchmark)+'%', cls(m.benchmark)],
@@ -226,8 +315,8 @@ function render(idx){
 
   // 交易明细表
   const trades = [];
-  r.buys.forEach((b, i) => {
-    const s = r.sells[i];
+  r0.buys.forEach((b, i) => {
+    const s = r0.sells[i];
     trades.push({type:'买入', date:b.timestamp, price:b.price, pnl:null, reason:b.reason||''});
     if (s) trades.push({type:'卖出', date:s.timestamp, price:s.price, pnl:s.return, reason:s.reason||''});
   });
