@@ -258,11 +258,19 @@ function removeDynamicIndicator(){
 }
 
 // 切换/挂载当前选中的动态指标到 strat_indicator 副图
+// 切换指标时旧 strat pane 会被 klinecharts 清理并在重建时追加到末尾,
+// 故每次都重建 EQUITY (挂载顺序: strat → equity), 确保权益副图始终在最底层。
 function applyIndicator(){
   removeDynamicIndicator();
   const name = currentIndicator;
   chart.createIndicator({ name, paneId: 'strat_indicator' });
   dynamicIndName = name;
+  // 重建权益副图, 保证它在动态指标下方 (最底层)
+  chart.removeIndicator({ name: 'EQUITY' });
+  chart.createIndicator({
+    name: 'EQUITY', paneId: 'equity_pane',
+    styles: { lines: [{ color: '#1f77b4', style: 'solid', size: 1.5 }] }
+  });
 }
 
 function render(idx){
@@ -318,14 +326,9 @@ function render(idx){
   renderStrategyIndicators(r);
 
   // 动态指标副图 (下拉选择 MACD/KDJ/RSI 等, 原生指标前端从K线自算, 切换周期自动重算)
-  applyIndicator();
-
-  // 权益曲线 (放在所有副图最下方)
+  // applyIndicator 内会重建 EQUITY 副图, 保证权益在动态指标下方 (最底层)
   equityData = r.equity || [];
-  chart.createIndicator({
-    name: 'EQUITY', paneId: 'equity_pane',
-    styles: { lines: [{ color: '#1f77b4', style: 'solid', size: 1.5 }] }
-  });
+  applyIndicator();
 
   // 买卖点标注 (用重采样视图 r: ts 已 remap 到周/月 bar)
   r.buys.forEach(p => addAnnotation(p, 'B', '#ff4d4f'));
