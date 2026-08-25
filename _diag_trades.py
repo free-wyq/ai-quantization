@@ -3,7 +3,7 @@ import pandas as pd
 import vectorbt as vbt
 from data.fetcher import fetch_stock_history
 from framework.strategies import STRATS
-from framework.factors.exit import atr, adx, trailing_stop_exits, volume_divergence_exits
+from framework.strategies.midterm import _atr, _adx, _trailing_stop_exits, _volume_divergence_exits
 
 df = fetch_stock_history('300308', '20250102', '20260818').copy()
 keep = [c for c in ['open','high','low','close','volume','amount','turnover_rate','symbol'] if c in df.columns]
@@ -20,10 +20,10 @@ pf = vbt.Portfolio.from_signals(
 trades = pf.trades.records_readable
 
 # 退出原因分析
-atr_s = atr(df, 14)
-adx_s, _, _ = adx(df, 14)
-atr_exit, stop_line = trailing_stop_exits(df, entries, atr_s, adx_s, mult_strong=3.5, mult_weak=2.0, adx_thresh=30.0)
-f15_exit = volume_divergence_exits(df, entries)
+atr_s = _atr(df, 14)
+adx_s, _, _ = _adx(df, 14)
+atr_exit, stop_line = _trailing_stop_exits(df, entries, atr_s, adx_s, mult_strong=3.5, mult_weak=2.0, adx_thresh=30.0)
+f15_exit = _volume_divergence_exits(df, entries)
 
 print("=" * 100)
 print(f"{'#':>2}  {'入场':>12}  {'退出':>12}  {'天数':>4}  {'买价':>8}  {'卖价':>8}  {'收益':>8}  {'退出原因'}")
