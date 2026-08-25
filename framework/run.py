@@ -223,8 +223,8 @@ if __name__ == "__main__":
     parser.add_argument("--no-plot", action="store_false", dest="plot", help="不生成看板")
     parser.add_argument("-p", "--params", nargs="*", default=[],
                         help="策略参数覆盖, 格式: key=value (如: ma_slow=30)")
-    parser.add_argument("--sl", type=float, default=None, help="止损比例(%%), 如 --sl 5 表示5%%止损")
-    parser.add_argument("--tp", type=float, default=None, help="止盈比例(%%), 如 --tp 10 表示10%%止盈")
+    parser.add_argument("--sl", type=float, default=None, help="止损比例(%), 如 --sl 5 表示5%止损")
+    parser.add_argument("--tp", type=float, default=None, help="止盈比例(%), 如 --tp 10 表示10%止盈")
     parser.add_argument("--start", type=str, default="20250101", help="回测起始日期 YYYYMMDD")
     parser.add_argument("--end", type=str, default="20260818", help="回测结束日期 YYYYMMDD")
     parser.add_argument("--optimize", action="store_true", help="参数网格搜索 + 样本外验证")
