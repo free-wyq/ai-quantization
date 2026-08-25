@@ -157,8 +157,8 @@ def valuation_signal(symbol: str, index: pd.DatetimeIndex,
     lookback: 分位回看窗口 (默认 1250 交易日 ≈ 5年)。
     pe_max/pb_max: 分位上限(百分数), 如 80 表示 PE/PB 不超过近5年80%分位。
 
-    注: 百度 PE/PB 历史日期互不对齐 (不同日有值), 先各自 reindex+ffill 到统一日历,
-    再算分位, 否则 AND 因错位日期产生 NaN 而失效。
+    注: 百度 PE/PB 历史日期互不对齐 (不同日有值), 故各自在完整历史上算分位,
+    再把分位 reindex+ffill 到回测 index 后取 AND, 既保留历史分位基准又保证同日可比。
     """
     pe = fetch_valuation(symbol, "市盈率(TTM)")
     pb = fetch_valuation(symbol, "市净率")
@@ -168,15 +168,13 @@ def valuation_signal(symbol: str, index: pd.DatetimeIndex,
         return pd.Series(True, index=index)
 
     def _pct_rank(s: pd.Series) -> pd.Series:
+        """在完整历史上算当日分位(0-100), 再对齐到回测 index (前向填充)。"""
         if s is None or len(s) == 0:
             return None
-        # 先对齐到目标日历并前向填充, 保证 PE/PB 同日可比
-        s_daily = s.reindex(index, method="ffill").dropna()
-        if s_daily.empty:
-            return None
         win = lookback
-        return s_daily.rolling(win, min_periods=min(60, win)).apply(
+        rank = s.rolling(win, min_periods=min(60, win)).apply(
             lambda x: float((x[-1] >= x).mean()) * 100, raw=True)
+        return rank.reindex(index, method="ffill")
 
     pe_rank = _pct_rank(pe) if has_pe else None
     pb_rank = _pct_rank(pb) if has_pb else None
