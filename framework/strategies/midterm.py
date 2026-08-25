@@ -33,6 +33,9 @@ def _weekly_kdj(df: pd.DataFrame, n: int = 9, k_period: int = 3, d_period: int =
 
     用 ta 库 StochasticOscillator。周线多头状态 (K>D) 作为方向过滤;
     日线 MACD 金叉作为具体买点。周线重采样到日度 (ffill)。
+
+    防未来函数: 周线序列 shift(1) 后再 reindex, 保证只引用"已收盘的上周"信号,
+    不使用尚未收盘的本周 (避免回测中用本周未来数据, 导致回测比实盘乐观)。
     """
     w_close = df["close"].resample("W").last().astype(float)
     w_high = df["high"].resample("W").max().astype(float)
@@ -40,7 +43,8 @@ def _weekly_kdj(df: pd.DataFrame, n: int = 9, k_period: int = 3, d_period: int =
     s = StochasticOscillator(w_high, w_low, w_close, window=n, smooth_window=k_period, fillna=False)
     K, D = s.stoch(), s.stoch_signal()
     weekly_long = (K > D)
-    daily_long = weekly_long.reindex(df.index, method="ffill").fillna(False)
+    # shift(1): 周线信号滞后一周, 不引用未收盘的本周; 再 ffill 到日度
+    daily_long = weekly_long.shift(1).reindex(df.index, method="ffill").fillna(False)
     return daily_long.astype(bool), K, D
 
 
@@ -59,10 +63,12 @@ def _volume_ratio(df: pd.DataFrame, window: int = 20, min_ratio: float = 1.2, lo
 
     lookback: 近N日内有任意一天量比>min_ratio即满足 (信号持续)。
     """
+    close = df["close"].astype(float)
     vol = df["volume"].astype(float)
     avg = vol.rolling(window).mean()
     ratio = vol / avg
-    raw = (ratio > min_ratio).fillna(False)
+    # 量价齐升: 近N日内有任意一天 量比>min_ratio 且当日收涨 (避免放量下跌的假突破)
+    raw = ((ratio > min_ratio) & (close > close.shift(1))).fillna(False)
     if lookback > 1:
         raw = raw.rolling(lookback).max().fillna(0).astype(bool)
     return raw, ratio
@@ -99,8 +105,9 @@ def _trailing_stop_exits(df, entries, atr_series, adx_series,
 
     profit_tighten: list of (profit_pct, mult), 如 [(1.0, 2.5), (2.0, 2.0)]
     盈利超过 profit_pct 时, 使用更紧的 mult, 锁定利润降低回撤。
+    注意: profit_pct 是"小数" (1.0 = 100% 盈利)。盈利 10% 应写 0.1。
 
-    max_retracement: 如 0.15 表示从持仓最高价回落 15% 即退出。
+    max_retracement: 如 0.25 表示从持仓最高价回落 25% 即退出。
     返回 (exits布尔, stop_line序列)。
     """
     close = df["close"].astype(float)
@@ -132,6 +139,7 @@ def _trailing_stop_exits(df, entries, atr_series, adx_series,
             new_stop = highest - current_mult * float(atr_safe.iloc[i])
             if max_retracement is not None:
                 retracement_stop = highest * (1 - max_retracement)
+                # max_retracement 是利润保护底线, 与 profit_tighten 主动收紧取严者
                 new_stop = max(new_stop, retracement_stop)
             prev_stop = new_stop if np.isnan(prev_stop) else max(prev_stop, new_stop)
             stop_line.iloc[i] = prev_stop
@@ -191,11 +199,13 @@ def _volume_divergence_exits(df, entries, window: int = 20,
 def _build_exits(df, entries, atr_period=14, adx_period=14,
                  mult_strong=3.5, mult_weak=2.0, adx_thresh=30.0,
                  use_f15=False, profit_tighten=None, max_retracement=None,
+                 use_signal_exit=False, signal_exit=None,
                  use_ma_stop=False, ma_stop_period=20,
                  f15_exit=None, atr_s=None, adx_s=None):
-    """综合退出 = MA止损 / ATR跟踪止损 + 量价背离(可选)。返回 (exits, stop_line)。
+    """综合退出 = MA止损 / ATR跟踪止损 + 量价背离(可选) + 趋势反转(可选)。返回 (exits, stop_line)。
 
     use_ma_stop=True 时使用均线止损, 忽略 ATR 止损参数。
+    signal_exit: 预计算的"趋势反转"布尔 Series (如 MACD 死叉日), 传入则叠加为主动退出。
     f15_exit / atr_s / adx_s: 预计算序列, 传入则跳过内部重复计算。
     """
     if use_ma_stop:
@@ -209,12 +219,13 @@ def _build_exits(df, entries, atr_period=14, adx_period=14,
             df, entries, atr_s, adx_s,
             mult_strong=mult_strong, mult_weak=mult_weak, adx_thresh=adx_thresh,
             profit_tighten=profit_tighten, max_retracement=max_retracement)
+    exits = base_exit
     if use_f15:
         if f15_exit is None:
             f15_exit = _volume_divergence_exits(df, entries)
-        exits = base_exit | f15_exit
-    else:
-        exits = base_exit
+        exits = exits | f15_exit
+    if use_signal_exit and signal_exit is not None:
+        exits = exits | signal_exit
     return exits.fillna(False), stop_line
 
 
@@ -224,12 +235,14 @@ class MidTermStrategy(Strategy):
     params = {
         # 信号
         "vol_min": 1.2, "vol_lookback": 5, "ma_period": 20,
-        "no_weekly": False, "no_ma60": False, "no_vol": False,
+        "no_weekly": False, "no_ma": False, "no_vol": False,
         "no_adx": False, "adx_entry_min": 20.0,
         # 退出
         "atr": 14, "adx": 14,
         "mult_strong": 3.5, "mult_weak": 2.0, "adx_thresh": 30.0,
-        "use_f15": False, "profit_tighten": None, "max_retracement": 0.10,
+        "use_f15": False,
+        "profit_tighten": [(0.10, 2.5), (0.20, 2.0)], "max_retracement": 0.25,
+        "use_signal_exit": False,
         "use_ma_stop": False, "ma_stop_period": 20,
         # 跨股票过滤层 (默认全关, 开启需 data/ 下全市场数据; 数据不全自动降级跳过)
         "use_gate": False, "use_sector_strong": False, "use_leader": False,
@@ -307,7 +320,7 @@ class MidTermStrategy(Strategy):
         entries = macd_bull.copy()
         if not p["no_weekly"]:
             entries = entries & wk_long
-        if not p["no_ma60"]:
+        if not p["no_ma"]:
             entries = entries & ma_up
         if not p["no_vol"]:
             entries = entries & vol_ok
@@ -336,6 +349,15 @@ class MidTermStrategy(Strategy):
 
         # --- 退出 ---
         f15_exit = _volume_divergence_exits(df, entries) if p["use_f15"] else None
+        # 趋势反转主动退出: 趋势弱时(ADX<阈值, 震荡市)MACD或周KDJ死叉即撤, 早断亏损;
+        # 趋势强时(ADX>=阈值)不触发, 交给 ATR 跟踪止损吃满趋势利润 (不砍大牛股的趋势)。
+        # 用 reindex 对齐到日线; 仅作退出信号, 入场逻辑不变。
+        signal_exit = None
+        if p.get("use_signal_exit"):
+            macd_bear = (~macd_bull).reindex(df.index).fillna(False)
+            wk_bear = (~wk_long).reindex(df.index).fillna(False)
+            weak_trend = (adx_s < p["adx_thresh"]).reindex(df.index).fillna(False)
+            signal_exit = ((macd_bear | wk_bear) & weak_trend).fillna(False)
         exits, stop_line = _build_exits(
             df, entries,
             atr_period=p["atr"], adx_period=p["adx"],
@@ -343,6 +365,8 @@ class MidTermStrategy(Strategy):
             adx_thresh=p["adx_thresh"], use_f15=p["use_f15"],
             profit_tighten=p.get("profit_tighten"),
             max_retracement=p.get("max_retracement"),
+            use_signal_exit=p.get("use_signal_exit", False),
+            signal_exit=signal_exit,
             use_ma_stop=p.get("use_ma_stop", False),
             ma_stop_period=p.get("ma_stop_period", 20),
             f15_exit=f15_exit, atr_s=atr_s, adx_s=adx_s,
@@ -359,12 +383,15 @@ class MidTermStrategy(Strategy):
         ]
 
         # --- 买卖原因 ---
-        reasons = self._build_reasons(df, entries, exits, stop_line, p, macd_bull, wk_long, ma_up, vol_ok, adx_s, f15_exit)
+        reasons = self._build_reasons(df, entries, exits, stop_line, p,
+                                     macd_bull, wk_long, ma_up, vol_ok, adx_s,
+                                     f15_exit, signal_exit)
 
         return SignalResult(entries, exits.fillna(False), indicators, reasons)
 
     def _build_reasons(self, df, entries, exits, stop_line, p,
-                       macd_bull, wk_long, ma_up, vol_ok, adx_s, f15_exit=None):
+                       macd_bull, wk_long, ma_up, vol_ok, adx_s,
+                       f15_exit=None, signal_exit=None):
         """为每个买入/卖出日期生成原因说明。"""
         close = df["close"].astype(float)
 
@@ -390,6 +417,8 @@ class MidTermStrategy(Strategy):
                 parts.append("MA止损" if use_ma_stop else "ATR跟踪止损")
             if p["use_f15"] and f15_exit is not None and f15_exit.loc[idx]:
                 parts.append("量价背离")
+            if p.get("use_signal_exit") and signal_exit is not None and signal_exit.loc[idx]:
+                parts.append("趋势反转")
             ts = int(pd.Timestamp(idx).timestamp() * 1000)
             sell_reasons[ts] = " | ".join(parts) if parts else "退出信号"
 
