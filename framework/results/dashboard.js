@@ -249,6 +249,21 @@ function buildView(r0, period){
 /* ---- 动态指标副图 (下拉选择 klinecharts 内置指标) ---- */
 let dynamicIndName = null;   // 当前已挂载的动态指标名 (用于精确移除)
 
+// 设置四层副图高度比例: 主图50% | VOL15% | 动态指标20% | 账户权益15%
+// 切换指标/周期重建 pane 后必须重设, 否则新建 pane 用默认高度撑大, 破坏比例。
+function setPaneHeights(){
+  const totalH = chartEl.clientHeight;
+  const layout = [
+    { id: 'candle_pane',     height: Math.floor(totalH * 0.50) },
+    { id: 'vol_pane',        height: Math.floor(totalH * 0.15) },
+    { id: 'strat_indicator', height: Math.floor(totalH * 0.20) },
+    { id: 'equity_pane',     height: Math.floor(totalH * 0.15) },
+  ];
+  layout.forEach(l => {
+    try { chart.setPaneOptions({ id: l.id, height: l.height }); } catch(e) {}
+  });
+}
+
 // 移除上一个动态指标 (按 name 移除; 兼容 registerIndicator 自定义名)
 function removeDynamicIndicator(){
   if (dynamicIndName) {
@@ -260,6 +275,7 @@ function removeDynamicIndicator(){
 // 切换/挂载当前选中的动态指标到 strat_indicator 副图
 // 切换指标时旧 strat pane 会被 klinecharts 清理并在重建时追加到末尾,
 // 故每次都重建 EQUITY (挂载顺序: strat → equity), 确保权益副图始终在最底层。
+// 重建 pane 后重设高度, 保持四层比例不变。
 function applyIndicator(){
   removeDynamicIndicator();
   const name = currentIndicator;
@@ -271,6 +287,7 @@ function applyIndicator(){
     name: 'EQUITY', paneId: 'equity_pane',
     styles: { lines: [{ color: '#1f77b4', style: 'solid', size: 1.5 }] }
   });
+  setPaneHeights();
 }
 
 function render(idx){
@@ -299,18 +316,8 @@ function render(idx){
         chart.setBarSpace(barSpace);
         const fitBars = Math.floor(w / barSpace);
         chart.scrollToDataIndex(Math.min(r.candles.length - 1, fitBars - SCROLL_OFFSET));
-
-        // 四层布局: 主图50% | 成交量15% | 动态指标20% | 账户权益15%
-        const totalH = chartEl.clientHeight;
-        const layout = [
-          { id: 'candle_pane',    height: Math.floor(totalH * 0.50) },
-          { id: 'vol_pane',       height: Math.floor(totalH * 0.15) },
-          { id: 'strat_indicator',height: Math.floor(totalH * 0.20) },
-          { id: 'equity_pane',    height: Math.floor(totalH * 0.15) },
-        ];
-        layout.forEach(l => {
-          try { chart.setPaneOptions({ id: l.id, height: l.height }); } catch(e) {}
-        });
+        // 四层布局高度比例 (与 applyIndicator 共用, 切指标后不漂移)
+        setPaneHeights();
       }, 50);
     }
   });
