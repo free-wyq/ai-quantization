@@ -6,6 +6,7 @@ const tradesBody = document.querySelector('#trades tbody');
 
 let currentIdx = 0;
 let currentPeriod = 'day';   // 'day' | 'week' | 'month'
+let currentIndicator = 'MACD';   // 动态副图指标 (下拉选择)
 
 RUNS.forEach((r, i) => {
   const o = document.createElement('option');
@@ -22,6 +23,23 @@ periodSel.style.width = '90px';
 });
 sel.parentNode.insertBefore(periodSel, sel.nextSibling);
 periodSel.addEventListener('change', e=>{ currentPeriod=e.target.value; render(currentIdx); });
+
+// 动态指标选择器 (副图: MACD/KDJ/RSI 等 klinecharts 内置指标, 切换即时重算)
+const INDICATORS = [
+  ['MACD','MACD'],['KDJ','KDJ'],['RSI','RSI'],['DMI','DMI(ADX)'],['WR','WR威廉'],
+  ['CCI','CCI'],['OBV','OBV能量潮'],['VR','VR量比'],['BOLL','BOLL布林'],['TRIX','TRIX'],
+  ['MTM','MTM动量'],['BIAS','BIAS乖离'],['CR','CR'],['BRAR','BRAR'],['EMV','EMV'],
+  ['PSY','PSY心理线'],['PVT','PVT'],['ROC','ROC'],
+];
+const indicatorSel = document.createElement('select');
+indicatorSel.id = 'indicator';
+indicatorSel.style.minWidth = '0';
+indicatorSel.style.width = '110px';
+INDICATORS.forEach(([v,t])=>{
+  const o=document.createElement('option'); o.value=v; o.textContent=t; indicatorSel.appendChild(o);
+});
+periodSel.parentNode.insertBefore(indicatorSel, periodSel.nextSibling);
+indicatorSel.addEventListener('change', e=>{ currentIndicator=e.target.value; applyIndicator(); });
 
 function fmt(n, d=2){ return Number(n).toLocaleString('zh-CN',{minimumFractionDigits:d,maximumFractionDigits:d}); }
 function cls(v){ return v>=0 ? 'pos' : 'neg'; }
@@ -228,6 +246,25 @@ function buildView(r0, period){
   return { ...r0, candles, indicators, equity, buys: remap(r0.buys||[]), sells: remap(r0.sells||[]) };
 }
 
+/* ---- 动态指标副图 (下拉选择 klinecharts 内置指标) ---- */
+let dynamicIndName = null;   // 当前已挂载的动态指标名 (用于精确移除)
+
+// 移除上一个动态指标 (按 name 移除; 兼容 registerIndicator 自定义名)
+function removeDynamicIndicator(){
+  if (dynamicIndName) {
+    chart.removeIndicator({ name: dynamicIndName });
+    dynamicIndName = null;
+  }
+}
+
+// 切换/挂载当前选中的动态指标到 strat_indicator 副图
+function applyIndicator(){
+  removeDynamicIndicator();
+  const name = currentIndicator;
+  chart.createIndicator({ name, paneId: 'strat_indicator' });
+  dynamicIndName = name;
+}
+
 function render(idx){
   currentIdx = idx;
   const r0 = RUNS[idx];
@@ -236,10 +273,9 @@ function render(idx){
 
   chart.removeOverlay();
   chart.removeIndicator({ name: 'EQUITY' });
-  // 内置指标: VOL(成交量+MA) / MACD / DMI(ADX), 每次切换 run 先清掉再重建
+  // 内置指标: VOL(成交量+MA) 固定; 动态副图指标每次切换 run 先清掉再由 applyIndicator 重建
   chart.removeIndicator({ name: 'VOL' });
-  chart.removeIndicator({ name: 'MACD' });
-  chart.removeIndicator({ name: 'DMI' });
+  removeDynamicIndicator();
 
   // v10: setSymbol + setPeriod + setDataLoader 三者就绪后触发 getBars
   chart.setSymbol({ ticker: r.symbol });
@@ -256,14 +292,13 @@ function render(idx){
         const fitBars = Math.floor(w / barSpace);
         chart.scrollToDataIndex(Math.min(r.candles.length - 1, fitBars - SCROLL_OFFSET));
 
-        // 五层布局: 主图43% | 量+量比21% | MACD17% | ADX12% | 权益7%
+        // 四层布局: 主图50% | 成交量15% | 动态指标20% | 账户权益15%
         const totalH = chartEl.clientHeight;
         const layout = [
-          { id: 'candle_pane', height: Math.floor(totalH * 0.40) },
-          { id: 'vol_pane',    height: Math.floor(totalH * 0.15) },
-          { id: 'strat_strat', height: Math.floor(totalH * 0.15) },
-          { id: 'strat_adx',   height: Math.floor(totalH * 0.15) },
-          { id: 'equity_pane', height: Math.floor(totalH * 0.15) },
+          { id: 'candle_pane',    height: Math.floor(totalH * 0.50) },
+          { id: 'vol_pane',       height: Math.floor(totalH * 0.15) },
+          { id: 'strat_indicator',height: Math.floor(totalH * 0.20) },
+          { id: 'equity_pane',    height: Math.floor(totalH * 0.15) },
         ];
         layout.forEach(l => {
           try { chart.setPaneOptions({ id: l.id, height: l.height }); } catch(e) {}
@@ -282,12 +317,10 @@ function render(idx){
   // 策略曲线 (ATR止损线等策略专属, 由策略函数动态提供; MA均线由基类注入)
   renderStrategyIndicators(r);
 
-  // 内置技术指标: MACD (含 DIF/DEA/柱) + DMI (含 ADX), 前端从K线自算, 与策略参数一致
-  // MACD 默认 12/26/9; DMI 默认 14 (ADX 周期)
-  chart.createIndicator({ name: 'MACD', paneId: 'strat_strat' });
-  chart.createIndicator({ name: 'DMI',  paneId: 'strat_adx' });
+  // 动态指标副图 (下拉选择 MACD/KDJ/RSI 等, 原生指标前端从K线自算, 切换周期自动重算)
+  applyIndicator();
 
-  // 权益曲线 (放在所有副图最下方, 紧邻策略收益)
+  // 权益曲线 (放在所有副图最下方)
   equityData = r.equity || [];
   chart.createIndicator({
     name: 'EQUITY', paneId: 'equity_pane',
