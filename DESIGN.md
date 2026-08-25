@@ -376,8 +376,8 @@ ADX策略5年回撤只有19%，所有策略中最低
 ### 落地要点
 
 - **七层闭环**：闸门(情绪/板块温度) → 板块 → 龙头 → 信号(周KDJ+MACD+MA+量比) → 环境(ADX+ATR定止损宽度) → 退出(ATR跟踪/量价背离) → 仓位(Kelly×ADX系数)。详见第二部分。
-- **当前接入状态**：个股信号层(第3层) + 退出(第5层) 已在 `midterm.generate()` 实现（信号因子 `_macd/_weekly_kdj/_ma_trend/_volume_ratio` 内联在 midterm.py）；跨股票过滤层(闸门/板块/龙头)的因子库已建(`framework/factors/market_state.py`/`sector_trend.py`/`leader.py`)，**默认全关**，逐个开启观察效果。**仓位层(第6层) Kelly 理论已定但尚未接入**——`generate()` 不返回 size，回测走等权满仓。
-- **因子库**：纯函数（日K进，等长对齐 Series 出），见 `framework/factors/`。
+- **当前接入状态**：个股信号层(第3层) + 退出(第5层) 已在 `midterm.generate()` 实现（信号因子 `_macd/_weekly_kdj/_ma_trend/_volume_ratio` 内联在 midterm.py）。**跨股票过滤层(第0/1/2层 闸门/板块/龙头)已接入** `framework/factors/cross_stock.py`（全市场状态缓存，按 symbol 切片），**资金面因子已接入** `framework/factors/flow.py`（北向净流入 + 个股主力净流入），**基本面排雷已接入** `framework/factors/fundamental.py`（PE/PB 分位 + ROE(TTM) + 商誉占比）——三类均**默认全关**，`use_gate/use_sector_strong/use_leader/use_northbound/use_main_flow/use_valuation/use_quality/use_goodwill` 逐个开启观察效果，取数失败自动降级跳过。**仓位层(第6层) Kelly 理论已定但尚未接入**——`generate()` 不返回 size，回测走等权满仓。
+- **因子库**：纯函数（日K进，等长对齐 Series 出），见 `framework/factors/`。当前因子库涵盖：`market_state`(广度/温度) / `sector_trend`(板块强势) / `leader`(龙头) / `cross_stock`(跨股票缓存) / `flow`(资金面) / `fundamental`(基本面排雷)。
 - **代码重构史**：基类模板方法（`run()` 骨架 + 子类 `generate()` 钩子 + `SignalResult`，公共指标 MA系统由基类统一组装）→ 信号因子从 `factors/signal.py` 内联进 midterm.py（signal.py 已清空）。详见 git log。
 
 ### 验证状态
@@ -673,6 +673,7 @@ f* = (p × b - q) / b
 - [x] 中期复合策略 midterm：周KDJ + MACD + MA + 量比 共振入场，ATR跟踪止损退出
 - [x] 参数优化：网格搜索 + train/test 拆分样本外验证
 - [x] 因子库 `framework/factors/`：纯函数，输入日K输出等长对齐 Series
+- [x] 跨股票因子接入：闸门/板块/龙头(`cross_stock.py`)、资金面(`flow.py`)、基本面排雷(`fundamental.py`)，默认全关可逐个开启，取数失败自动降级
 
 ### 当前局限
 
@@ -681,7 +682,7 @@ f* = (p × b - q) / b
 ```
 
 - 只能跑一只股票，无组合概念
-- 跨股票过滤层（闸门/板块/龙头）已建因子库但**尚未接入 midterm**（默认全关，逐个开启观察效果）
+- 跨股票/资金面/基本面因子已接入但**默认全关**（需联网取数，逐个开启观察效果；数据源在 WSL 环境部分受限：东财域名 SSL 不通，百度估值/新浪财务可用）
 - **仓位层未接入**：midterm `generate()` 不返回 size，回测等权满仓，Kelly/分级理论待接线
 - 无实盘对接
 
@@ -731,7 +732,7 @@ f* = (p × b - q) / b
 - [ ] 多因子打分：价值/动量/质量/波动率因子
 - [ ] 因子排名选股：全市场按因子得分排名取 Top N
 - [ ] 行业中性化：剔除行业偏差
-- [ ] 财务数据接入：PE/PB/ROE 等基本面因子
+- [x] 财务数据接入：PE/PB/ROE/商誉 基本面排雷因子已落地(`framework/factors/fundamental.py`)，作为选股池硬过滤接入 midterm(默认关)，多因子打分模型待后续
 
 ### 3.2 组合回测
 
