@@ -231,6 +231,9 @@ class MidTermStrategy(Strategy):
         "mult_strong": 3.5, "mult_weak": 2.0, "adx_thresh": 30.0,
         "use_f15": False, "profit_tighten": None, "max_retracement": 0.10,
         "use_ma_stop": False, "ma_stop_period": 20,
+        # 跨股票过滤层 (默认全关, 开启需 data/ 下全市场数据; 数据不全自动降级跳过)
+        "use_gate": False, "use_sector_strong": False, "use_leader": False,
+        "leader_top": 3, "leader_turnover_min": 1.0, "leader_turnover_max": 30.0,
     }
 
     def generate(self, df: pd.DataFrame) -> SignalResult:
@@ -245,6 +248,25 @@ class MidTermStrategy(Strategy):
         atr_s = _atr(df, p["atr"])
         adx_s, _, _ = _adx(df, p["adx"])
 
+        # --- 跨股票因子 (闸门/板块/龙头, 默认全关; 开启需全市场数据, 降级自动跳过) ---
+        gate_ok = sector_strong_ok = leader_ok = None
+        if p.get("use_gate") or p.get("use_sector_strong") or p.get("use_leader"):
+            try:
+                from framework.factors.cross_stock import get_cross_stock_factors as _csf
+                cs = _csf(
+                    str(df["symbol"].iloc[0]) if "symbol" in df.columns else "",
+                    df.index,
+                    leader_top=p.get("leader_top", 3),
+                    turnover_min=p.get("leader_turnover_min", 1.0),
+                    turnover_max=p.get("leader_turnover_max", 30.0),
+                )
+                if cs is not None:
+                    gate_ok = cs["gate"]
+                    sector_strong_ok = cs["sector_strong"]
+                    leader_ok = cs["leader"]
+            except Exception:
+                pass
+
         # --- 入场信号: MACD多头 & 周KDJ多头 & MA向上 & 量比放大 & ADX趋势强 ---
         entries = macd_bull.copy()
         if not p["no_weekly"]:
@@ -255,6 +277,13 @@ class MidTermStrategy(Strategy):
             entries = entries & vol_ok
         if not p["no_adx"]:
             entries = entries & (adx_s >= p["adx_entry_min"])
+        # 跨股票过滤层 (默认关; 开启且数据可用时叠加)
+        if p.get("use_gate") and gate_ok is not None:
+            entries = entries & gate_ok
+        if p.get("use_sector_strong") and sector_strong_ok is not None:
+            entries = entries & sector_strong_ok
+        if p.get("use_leader") and leader_ok is not None:
+            entries = entries & leader_ok
         entries = entries.fillna(False)
 
         # --- 退出 ---
