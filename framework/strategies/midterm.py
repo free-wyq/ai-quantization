@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
+from ta.volume import OnBalanceVolumeIndicator
 from ta.trend import MACD, ADXIndicator, TRIXIndicator
 from ta.momentum import StochasticOscillator
 from ta.volatility import AverageTrueRange
@@ -59,7 +60,7 @@ def _ma_trend(df: pd.DataFrame, period: int = 60):
 
 
 def _volume_ratio(df: pd.DataFrame, window: int = 20, min_ratio: float = 1.2, lookback: int = 5):
-    """量比确认 (F13)。返回 (量比满足布尔, 量比序列)。
+    """[已废弃] 量比确认 (F13)。被 _obv 取代, 保留供 use_f15 量价背离退出复用。
 
     lookback: 近N日内有任意一天量比>min_ratio即满足 (信号持续)。
     """
@@ -72,6 +73,22 @@ def _volume_ratio(df: pd.DataFrame, window: int = 20, min_ratio: float = 1.2, lo
     if lookback > 1:
         raw = raw.rolling(lookback).max().fillna(0).astype(bool)
     return raw, ratio
+
+
+def _obv(df: pd.DataFrame, window: int = 20):
+    """OBV 能量潮 (量在价先)。
+
+    OBV = 累计成交量 (涨日加, 跌日减, 平盘不变), 反映资金持续流入/流出。
+    多头状态 = OBV 在近 window 日创新高 (资金持续流入, 趋势有量能支撑)。
+    比"量比放大"更扎实: 量比只看单日放量, OBV 看累计资金方向 (中长期量能)。
+    返回 (多头布尔, OBV序列)。
+    """
+    close = df["close"].astype(float)
+    vol = df["volume"].astype(float)
+    obv = OnBalanceVolumeIndicator(close=close, volume=vol, fillna=False).on_balance_volume()
+    obv_max = obv.rolling(window).max()
+    obv_bull = (obv >= obv_max).fillna(False)
+    return obv_bull, obv
 
 
 def _trix(df: pd.DataFrame, window: int = 12, signal_window: int = 9):
@@ -250,9 +267,10 @@ class MidTermStrategy(Strategy):
     params = {
         # 信号
         "vol_min": 1.2, "vol_lookback": 5, "ma_period": 20,
-        "no_weekly": False, "no_ma": False, "no_vol": False,
+        "no_weekly": False, "no_ma": False,
         "no_adx": False, "adx_entry_min": 20.0,
         "no_trix": False, "trix_window": 12, "trix_signal": 9,
+        "no_obv": False, "obv_window": 20,
         # 退出
         "atr": 14, "adx": 14,
         "mult_strong": 3.5, "mult_weak": 2.0, "adx_thresh": 30.0,
@@ -279,7 +297,7 @@ class MidTermStrategy(Strategy):
         macd_bull, _, _ = _macd(df)
         wk_long, _, _ = _weekly_kdj(df)
         ma_up, _ = _ma_trend(df, p["ma_period"])
-        vol_ok, _ = _volume_ratio(df, min_ratio=p["vol_min"], lookback=p["vol_lookback"])
+        obv_bull, _ = _obv(df, window=p["obv_window"])
         trix_bull, _, _ = _trix(df, window=p["trix_window"], signal_window=p["trix_signal"])
         atr_s = _atr(df, p["atr"])
         adx_s, _, _ = _adx(df, p["adx"])
@@ -333,19 +351,20 @@ class MidTermStrategy(Strategy):
             except Exception:
                 pass
 
-        # --- 入场信号: MACD多头 & 周KDJ多头 & MA向上 & 量比放大 & ADX趋势强 ---
+        # --- 入场信号: MACD多头 & 周KDJ多头 & MA向上 & ADX趋势强 & TRIX & OBV ---
         entries = macd_bull.copy()
         if not p["no_weekly"]:
             entries = entries & wk_long
         if not p["no_ma"]:
             entries = entries & ma_up
-        if not p["no_vol"]:
-            entries = entries & vol_ok
         if not p["no_adx"]:
             entries = entries & (adx_s >= p["adx_entry_min"])
         # TRIX 趋势过滤: 中长期趋势向上 (默认开; no_trix=True 可关闭)
         if not p["no_trix"]:
             entries = entries & trix_bull
+        # OBV 量能过滤: 资金持续流入 (近N日OBV创新高, 量在价先; 默认开; no_obv=True 可关闭)
+        if not p["no_obv"]:
+            entries = entries & obv_bull
         # 跨股票过滤层 (默认关; 开启且数据可用时叠加)
         if p.get("use_gate") and gate_ok is not None:
             entries = entries & gate_ok
@@ -404,25 +423,27 @@ class MidTermStrategy(Strategy):
 
         # --- 买卖原因 ---
         reasons = self._build_reasons(df, entries, exits, stop_line, p,
-                                     macd_bull, wk_long, ma_up, vol_ok, adx_s,
-                                     f15_exit, signal_exit, trix_bull)
+                                     macd_bull, wk_long, ma_up, adx_s,
+                                     f15_exit, signal_exit, trix_bull, obv_bull)
 
         return SignalResult(entries, exits.fillna(False), indicators, reasons)
 
     def _build_reasons(self, df, entries, exits, stop_line, p,
-                       macd_bull, wk_long, ma_up, vol_ok, adx_s,
-                       f15_exit=None, signal_exit=None, trix_bull=None):
+                       macd_bull, wk_long, ma_up, adx_s,
+                       f15_exit=None, signal_exit=None, trix_bull=None, obv_bull=None):
         """为每个买入/卖出日期生成原因说明。"""
         close = df["close"].astype(float)
 
         buy_flags = [
             (macd_bull, "MACD多头"), (wk_long, "周KDJ多头"),
-            (ma_up, "MA向上"), (vol_ok, "量比放大"),
+            (ma_up, "MA向上"),
         ]
         if not p["no_adx"]:
             buy_flags.append((adx_s >= p["adx_entry_min"], "ADX趋势强"))
         if not p["no_trix"]:
             buy_flags.append((trix_bull, "TRIX多头"))
+        if not p["no_obv"]:
+            buy_flags.append((obv_bull, "OBV资金流入"))
         if not p["no_trix"]:
             buy_flags.append((trix_bull, "TRIX多头"))
 
