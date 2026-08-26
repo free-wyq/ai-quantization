@@ -129,6 +129,27 @@ def _download(symbol: str, start_date: str, end_date: str,
     return df
 
 
+def get_stock_name(symbol: str) -> str:
+    """查股票名称 (用于看板标注/文件命名)。
+
+    优先读 data/sector_mapping.csv (全市场~5000只), 回退 data/stock_list.csv (30只),
+    再回退空串。两文件均为 utf-8-sig (带 BOM), pandas 自动识别。
+    """
+    symbol = str(symbol).zfill(6)
+    for fn in ("sector_mapping.csv", "stock_list.csv"):
+        path = os.path.join(DATA_DIR, fn)
+        if os.path.exists(path):
+            try:
+                df = pd.read_csv(path, dtype=str)
+                df["symbol"] = df["symbol"].astype(str).str.zfill(6)
+                hit = df.loc[df["symbol"] == symbol, "name"]
+                if len(hit):
+                    return str(hit.iloc[0]).strip()
+            except Exception:
+                pass
+    return ""
+
+
 def fetch_stock_history(symbol: str, start_date: str, end_date: str,
                         use_cache: bool = True, name: str = "") -> pd.DataFrame:
     """

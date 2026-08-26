@@ -54,6 +54,11 @@ const MAX_BARS = 150;
 const SCROLL_OFFSET = 3;  // scrollToDataIndex 边界修正值
 
 const chart = klinecharts.init('chart');
+
+// 图表标题 (JS 注入 DOM, 不改 dashboard.html): 显示 股票名称(代码) · 策略 · 周期
+const chartTitle = document.createElement('div');
+chartTitle.id = 'chart-title';
+chartEl.parentNode.insertBefore(chartTitle, chartEl);
 chart.setStyles({
   grid: { horizontal: { color: 'transparent' }, vertical: { color: 'transparent' } },
   candle: {
@@ -304,6 +309,13 @@ function render(idx){
 
   // v10: setSymbol + setPeriod + setDataLoader 三者就绪后触发 getBars
   chart.setSymbol({ ticker: r.symbol });
+
+  // 图表标题: 策略标签 · 股票名称(代码) · 周期
+  const sym = r.stock_name ? `${r.stock_name}(${r.symbol})` : r.symbol;
+  const periodTxt = currentPeriod === 'day' ? '日线' : (currentPeriod === 'week' ? '周线' : '月线');
+  const stratTxt = r.strategy_label || r.strategy || '';
+  chartTitle.textContent = [stratTxt, sym, periodTxt].filter(Boolean).join(' · ');
+
   chart.setPeriod({ type: currentPeriod, span: 1 });
   chart.setDataLoader({
     getBars: ({ callback }) => {

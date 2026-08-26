@@ -26,7 +26,7 @@ import argparse
 import vectorbt as vbt
 import pandas as pd
 
-from data.fetcher import fetch_stock_history
+from data.fetcher import fetch_stock_history, get_stock_name
 from framework.strategies import STRATS
 
 # ===== 结果看板相关路径 =====
@@ -43,10 +43,15 @@ COST_SLIPPAGE = 0.001   # 滑点 0.1%
 
 
 def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indicators, reasons=None):
-    """把本次回测结果写成独立 JSON 文件 (按 代码_策略_时间 命名), 并重建看板。"""
+    """把本次回测结果写成独立 JSON 文件 (按 策略_代码_时间 命名), 并重建看板。"""
     os.makedirs(RUNS_DIR, exist_ok=True)
     now = datetime.datetime.now()
     ts = now.strftime("%Y%m%d_%H%M%S")
+
+    # 查股票名称 (用于看板标注/文件名), 查不到留空
+    stock_name = get_stock_name(symbol)
+    name_part = f"{stock_name}({symbol})" if stock_name else symbol
+    strat_label = STRATS[strategy_key].label if strategy_key in STRATS else strategy_key
 
     candles = []
     for i in range(len(df)):
@@ -88,10 +93,12 @@ def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indica
 
     run_data = {
         "id": ts,
-        "label": f"{strategy_key.upper()} {symbol} {now.strftime('%Y-%m-%d %H:%M')}",
-        "file": f"{symbol}_{strategy_key}_{ts}.json",
+        "label": f"{strat_label} · {name_part} · {now.strftime('%Y-%m-%d %H:%M')}",
+        "file": f"{strategy_key}_{symbol}_{ts}.json",
         "strategy": strategy_key,
+        "strategy_label": strat_label,
         "symbol": symbol,
+        "stock_name": stock_name,
         "metrics": metrics,
         "candles": candles,
         "buys": buys,
@@ -100,15 +107,34 @@ def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indica
         "indicators": indicators,
     }
 
-    # 每次运行写一个独立文件, 文件名含 代码_策略_时间
+    # 每次运行写一个独立文件, 文件名含 策略_代码_时间
     filename = run_data["file"]
     with open(os.path.join(RUNS_DIR, filename), "w", encoding="utf-8") as f:
         json.dump(run_data, f, ensure_ascii=False, indent=2)
+
+    # 保留最近 MAX_RUNS 次, 旧的自动清理
+    _rotate_runs()
 
     print(f"  结果已存档: framework/results/runs/{filename}")
     print(f"  看板服务:   framework/ 目录下执行  python serve_dashboard.py")
     print(f"  浏览器打开: http://localhost:8000/framework/results/dashboard.html")
     print(f"  (每次刷新页面都会自动加载最新回测记录)")
+
+
+def _rotate_runs():
+    """保留最近 MAX_RUNS 个 run JSON, 按文件名时间戳排序删旧的。
+
+    文件名格式 {strategy}_{symbol}_{YYYYMMDD_HHMMSS}.json, 字典序=时间序, 末尾即最新。
+    """
+    try:
+        files = sorted(f for f in os.listdir(RUNS_DIR) if f.endswith(".json"))
+    except FileNotFoundError:
+        return
+    for old in files[:-MAX_RUNS]:
+        try:
+            os.remove(os.path.join(RUNS_DIR, old))
+        except OSError:
+            pass
 
 
 def run(strategy_key: str, symbol: str, do_plot: bool = False, param_overrides: dict = None,
