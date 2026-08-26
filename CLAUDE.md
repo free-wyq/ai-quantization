@@ -81,9 +81,19 @@ framework/batch_backtest.py  30股批量回测
 
 `framework/strategies/midterm.py` 是当前唯一内置策略,七层闭环架构见 `DESIGN.md` 第二部分。它依赖 `framework/factors/` 因子库(纯函数:输入日K,输出等长对齐 Series):
 
-- `factors/exit.py` — ATR跟踪止损 / 量价背离 / ADX / `build_exits`
+- `factors/market_state.py` — 个股广度/情绪/板块温度(闸门)
+- `factors/sector_trend.py` — 板块强势(申万)
+- `factors/leader.py` — 龙头筛选
+- `factors/cross_stock.py` — 跨股票因子缓存入口(gate/sector_strong/leader)
+- `factors/flow.py` — 北向/主力净流入(东财接口,WSL 必降级)
+- `factors/fundamental.py` — PE/PB分位(百度)+ROE(TTM)+商誉(新浪)
+- ⚠️ 退出逻辑(ATR跟踪止损/量价背离/ADX)**不在 factors/,已内联在 midterm.py**(`_atr`/`_build_exits` 等),`factors/exit.py` 早已删除。
 
-midterm 的 `generate(df)` 组装个股信号层(第3层信号 + 第5层退出 + 可视化指标 + 买卖原因);跨股票过滤层(第0层闸门 `market_state.py` / 第1层板块 `sector_trend.py` / 第2层龙头 `leader.py`)的因子库**已建好但暂未接入**(midterm params 默认 `use_sector_strong/use_leader/use_gate` 全关),逐个开启观察效果。跨股票状态原本在 midterm 模块级缓存 `_STATE`(按区间+阈值 key),精简后已随跨股票层关闭而移除;开启时需重新引入缓存避免每只股票重算全市场。依赖 `data/sectors.py`(申万板块映射 + `sector_mapping.csv`/`stock_list.csv`)。
+midterm 的 `generate(df)` 组装个股信号层(第3层信号 + 第5层退出 + 可视化指标 + 买卖原因);跨股票/资金面/基本面三类因子**已接入但默认全关**(`use_*` 开关,取数失败自动降级跳过)。
+
+> **架构债(待重构)**:三类选股因子当前通过 `entries = entries & xxx` 混在 `generate()` 末尾,违反「选股与回测分离」单一职责。设计见 `DESIGN.md` 第三部分「3.1 选股与回测分离」——静态选股迁入基类 `select()` 钩子、动态跨股票迁入独立 `MarketRegime` 模块、`generate()` 回归纯单股择时。后续重构方向,不立即动代码。
+
+依赖 `data/sectors.py`(申万板块映射 + `sector_mapping.csv`/`stock_list.csv`)。
 
 ## 环境
 

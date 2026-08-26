@@ -377,6 +377,7 @@ ADX策略5年回撤只有19%，所有策略中最低
 
 - **七层闭环**：闸门(情绪/板块温度) → 板块 → 龙头 → 信号(周KDJ+MACD+MA+量比) → 环境(ADX+ATR定止损宽度) → 退出(ATR跟踪/量价背离) → 仓位(Kelly×ADX系数)。详见第二部分。
 - **当前接入状态**：个股信号层(第3层) + 退出(第5层) 已在 `midterm.generate()` 实现（信号因子 `_macd/_weekly_kdj/_ma_trend/_volume_ratio` 内联在 midterm.py）。**跨股票过滤层(第0/1/2层 闸门/板块/龙头)已接入** `framework/factors/cross_stock.py`（全市场状态缓存，按 symbol 切片），**资金面因子已接入** `framework/factors/flow.py`（北向净流入 + 个股主力净流入），**基本面排雷已接入** `framework/factors/fundamental.py`（PE/PB 分位 + ROE(TTM) + 商誉占比）——三类均**默认全关**，`use_gate/use_sector_strong/use_leader/use_northbound/use_main_flow/use_valuation/use_quality/use_goodwill` 逐个开启观察效果，取数失败自动降级跳过。**仓位层(第6层) Kelly 理论已定但尚未接入**——`generate()` 不返回 size，回测走等权满仓。
+  - ⚠️ **架构债（待重构）**：上述三类选股因子当前通过 `entries = entries & xxx` 混在 `generate()` 末尾，违反「选股与回测分离」单一职责。按第三部分「3.1 选股与回测分离」设计，静态选股迁入 `select()` 钩子、动态跨股票迁入独立 `MarketRegime` 模块、`generate()` 回归纯单股择时。这是后续重构方向，不立即动代码。
 - **因子库**：纯函数（日K进，等长对齐 Series 出），见 `framework/factors/`。当前因子库涵盖：`market_state`(广度/温度) / `sector_trend`(板块强势) / `leader`(龙头) / `cross_stock`(跨股票缓存) / `flow`(资金面) / `fundamental`(基本面排雷)。
 - **代码重构史**：基类模板方法（`run()` 骨架 + 子类 `generate()` 钩子 + `SignalResult`，公共指标 MA系统由基类统一组装）→ 信号因子从 `factors/signal.py` 内联进 midterm.py（signal.py 已清空）。详见 git log。
 
@@ -729,10 +730,63 @@ f* = (p × b - q) / b
 
 ### 3.1 选股模型
 
+> **架构决策（2026-08-27）：选股与回测分离（单一职责）。** 完整交易流程是「选股 → 策略执行」，
+> 回测引擎只负责给定一只股的择时回测，不应内含选股逻辑。详见下方「选股与回测分离」设计。
+> 这是后续重构目标，不立即动代码。
+
+#### 选股与回测分离（设计稿，待实现）
+
+**问题**：当前 `midterm.generate()` 把选股逻辑和择时信号混在一起——跨股票(闸门/板块/龙头)、
+资金面(北向/主力)、基本面(PE/ROE/商誉)三类因子都通过 `entries = entries & xxx` 塞进择时函数
+（见 `midterm.py` 末尾 `use_*` 开关块，默认全关）。这违反单一职责：
+
+- **择时（策略执行）**：给定一只股的 OHLCV，产出何时买何时卖 —— `generate()` 该干的
+- **选股（择股）**：这只股该不该做、是不是龙头、基本面过不过关 —— 组合/选股层的职责
+
+尤其**跨股票因子**（gate/sector/leader）本质是全市场状态，塞进单股信号函数更别扭。
+
+**两类选股必须分清（关键）**：
+
+| 类型 | 例子 | 特征 | 分离方式 |
+|------|------|------|---------|
+| 静态/半静态选股 | PE/ROE/商誉/换手率 | 变化慢（季度更新） | **完全分离**：回测前先过筛，不达标不进回测，回测层零污染 |
+| 动态跨股票选股 | 闸门/龙头/板块强势 | 每日/每周变，需全市场排名 | **难完全分离**：逐日布尔 Series，必须和信号时间对齐、防未来函数；强分离易踩"用未来信息选股"的坑 |
+
+**落地设计（基类分两个钩子 + 独立 MarketRegime 模块）**：
+
+```
+Strategy
+  ├─ select(df) → bool | Series   # 选股钩子：这只股该不该做（静态基本面/换手率）
+  └─ generate(df) → SignalResult  # 择时钩子：何时买何时卖（纯单股 OHLCV，不含选股污染）
+
+run(df):
+  if not select(df): return 全空头   # 选股层先把关，不达标直接全空头
+  return generate(df)               # 通过的才择时
+
+# 动态跨股票因子（gate/leader/板块强势）独立成 MarketRegime 模块，
+# 作为外部输入传入回测（它本就是全市场状态，不属于任何单股）。
+```
+
+三类职责清晰分离：
+
+- 静态选股 → `select()` 钩子（基类）
+- 动态择股 → 独立 `MarketRegime` 模块（传入，非内嵌）
+- 择时 → `generate()`（清理掉末尾的 `use_*` 选股污染，回归纯单股信号）
+
+**陷阱提醒**：完全分离选股必须**逐日 point-in-time**（只用截至当日的数据），
+不能拿年末 ROE 去筛年初。`fundamental.py` 的 PE/PB 分位已按历史 rolling 处理此点，
+但 ROE 的 TTM 仍是「最新值」回填，严格说有未来函数风险——真分离时要一起治理。
+
+**当前状态**：选股逻辑仍混在 `generate()` 末尾（`use_gate/use_sector_strong/use_leader/
+use_northbound/use_main_flow/use_valuation/use_quality/use_goodwill` 开关，默认全关，
+取数失败自动降级跳过）。本设计为后续重构方向。
+
+#### 选股模型路线项
+
 - [ ] 多因子打分：价值/动量/质量/波动率因子
 - [ ] 因子排名选股：全市场按因子得分排名取 Top N
 - [ ] 行业中性化：剔除行业偏差
-- [x] 财务数据接入：PE/PB/ROE/商誉 基本面排雷因子已落地(`framework/factors/fundamental.py`)，作为选股池硬过滤接入 midterm(默认关)，多因子打分模型待后续
+- [x] 财务数据接入：PE/PB/ROE/商誉 基本面排雷因子已落地(`framework/factors/fundamental.py`)，当前作为 midterm 选股硬过滤接入(默认关，混在 generate 里)；按上述设计应迁入 `select()` 钩子，多因子打分模型待后续
 
 ### 3.2 组合回测
 
@@ -789,6 +843,7 @@ f* = (p × b - q) / b
 - [ ] 多市场支持：港股/美股/期货
 - [ ] 性能优化：大数据量回测的内存控制
 - [ ] A股成本模型抽公共：`run.py` / `batch_backtest.py` / `optimize.py` 三处复制粘贴，改成本须三处同改
+- [ ] **选股与回测分离（单一职责重构）**：把 `generate()` 末尾混入的三类选股因子（跨股票/资金面/基本面，`use_*` 开关块）剥出——静态选股迁入基类 `select()` 钩子，动态跨股票迁入独立 `MarketRegime` 模块（作为外部输入传入回测），`generate()` 回归纯单股择时。详见第三部分 3.1。同时治理 ROE(TTM) 的 point-in-time 未来函数风险。
 
 ---
 
