@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
-from ta.trend import MACD, ADXIndicator
+from ta.trend import MACD, ADXIndicator, TRIXIndicator
 from ta.momentum import StochasticOscillator
 from ta.volatility import AverageTrueRange
 from framework.strategies.base import Strategy, series_to_list, SignalResult
@@ -72,6 +72,21 @@ def _volume_ratio(df: pd.DataFrame, window: int = 20, min_ratio: float = 1.2, lo
     if lookback > 1:
         raw = raw.rolling(lookback).max().fillna(0).astype(bool)
     return raw, ratio
+
+
+def _trix(df: pd.DataFrame, window: int = 12, signal_window: int = 9):
+    """TRIX 趋势过滤 (三重平滑均线变化率)。
+
+    TRIX = 三重 EMA 的变化率 (%)。配信号线 (TRIX 的 EMA)。
+    多头状态 = TRIX > 信号线 (中长期趋势向上, 过滤震荡市的频繁假信号)。
+    返回 (多头布尔, TRIX序列, 信号序列)。
+    window 默认 12 (A股常用); ta 库默认 15, 此处用 12 更敏感。
+    """
+    close = df["close"].astype(float)
+    trix = TRIXIndicator(close=close, window=window, fillna=False).trix()
+    signal = trix.ewm(span=signal_window, adjust=False).mean()
+    trix_bull = (trix > signal).fillna(False)
+    return trix_bull, trix, signal
 
 
 # ---- 退出因子 (本策略专用) ----
@@ -237,6 +252,7 @@ class MidTermStrategy(Strategy):
         "vol_min": 1.2, "vol_lookback": 5, "ma_period": 20,
         "no_weekly": False, "no_ma": False, "no_vol": False,
         "no_adx": False, "adx_entry_min": 20.0,
+        "no_trix": False, "trix_window": 12, "trix_signal": 9,
         # 退出
         "atr": 14, "adx": 14,
         "mult_strong": 3.5, "mult_weak": 2.0, "adx_thresh": 30.0,
@@ -264,6 +280,7 @@ class MidTermStrategy(Strategy):
         wk_long, _, _ = _weekly_kdj(df)
         ma_up, _ = _ma_trend(df, p["ma_period"])
         vol_ok, _ = _volume_ratio(df, min_ratio=p["vol_min"], lookback=p["vol_lookback"])
+        trix_bull, _, _ = _trix(df, window=p["trix_window"], signal_window=p["trix_signal"])
         atr_s = _atr(df, p["atr"])
         adx_s, _, _ = _adx(df, p["adx"])
 
@@ -326,6 +343,9 @@ class MidTermStrategy(Strategy):
             entries = entries & vol_ok
         if not p["no_adx"]:
             entries = entries & (adx_s >= p["adx_entry_min"])
+        # TRIX 趋势过滤: 中长期趋势向上 (默认开; no_trix=True 可关闭)
+        if not p["no_trix"]:
+            entries = entries & trix_bull
         # 跨股票过滤层 (默认关; 开启且数据可用时叠加)
         if p.get("use_gate") and gate_ok is not None:
             entries = entries & gate_ok
@@ -385,13 +405,13 @@ class MidTermStrategy(Strategy):
         # --- 买卖原因 ---
         reasons = self._build_reasons(df, entries, exits, stop_line, p,
                                      macd_bull, wk_long, ma_up, vol_ok, adx_s,
-                                     f15_exit, signal_exit)
+                                     f15_exit, signal_exit, trix_bull)
 
         return SignalResult(entries, exits.fillna(False), indicators, reasons)
 
     def _build_reasons(self, df, entries, exits, stop_line, p,
                        macd_bull, wk_long, ma_up, vol_ok, adx_s,
-                       f15_exit=None, signal_exit=None):
+                       f15_exit=None, signal_exit=None, trix_bull=None):
         """为每个买入/卖出日期生成原因说明。"""
         close = df["close"].astype(float)
 
@@ -401,6 +421,10 @@ class MidTermStrategy(Strategy):
         ]
         if not p["no_adx"]:
             buy_flags.append((adx_s >= p["adx_entry_min"], "ADX趋势强"))
+        if not p["no_trix"]:
+            buy_flags.append((trix_bull, "TRIX多头"))
+        if not p["no_trix"]:
+            buy_flags.append((trix_bull, "TRIX多头"))
 
         buy_reasons = {}
         for idx in entries[entries].index:
