@@ -56,7 +56,7 @@ def _boll(df: pd.DataFrame, window: int = 20, dev: float = 2.0):
 
     多头状态 = 收盘价站上布林中轨 (MA20)。与单纯 MA 向上不同:
     BOLL 中轨即 MA20, 但带宽度量波动率, 可供通道突破/收口判断扩展。
-    返回 (多头布尔, 中轨序列, 上轨, 下轨)。
+    返回 (多头布尔, 中轨序列, 上轨, 下轨, 带宽序列)。
     """
     close = df["close"].astype(float)
     bb = BollingerBands(close=close, window=window, window_dev=dev, fillna=False)
@@ -64,7 +64,27 @@ def _boll(df: pd.DataFrame, window: int = 20, dev: float = 2.0):
     upper = bb.bollinger_hband()
     lower = bb.bollinger_lband()
     boll_bull = (close > mid).fillna(False)
-    return boll_bull, mid, upper, lower
+    # 带宽 = (上轨-下轨)/中轨*100, 度量波动率; 收口(低位) = 蓄力期
+    bandwidth = ((upper - lower) / mid.replace(0, np.nan) * 100)
+    return boll_bull, mid, upper, lower, bandwidth
+
+
+def _boll_squeeze(df: pd.DataFrame, bw_window: int = 20, bw_rank_window: int = 60,
+                  squeeze_pct: float = 0.20):
+    """BOLL 带宽收口判断 (波动率状态维度)。
+
+    收口 = 带宽处于近 bw_rank_window 日的低位 (分位 <= squeeze_pct) = 蓄力期。
+    蓄力期波动率被压缩, 随后将爆发单边行情; 此时周KDJ等趋势因子常钝化,
+    适合放宽入场条件抓住启动点 (择时增强, 非 AND 硬过滤)。
+    返回 (收口布尔, 带宽分位序列 0~1)。
+    """
+    close = df["close"].astype(float)
+    bb = BollingerBands(close=close, window=bw_window, window_dev=2.0, fillna=False)
+    mid = bb.bollinger_mavg()
+    bandwidth = (bb.bollinger_hband() - bb.bollinger_lband()) / mid.replace(0, np.nan) * 100
+    bw_pct = bandwidth.rolling(bw_rank_window).rank(pct=True)
+    squeeze = (bw_pct <= squeeze_pct).fillna(False)
+    return squeeze, bw_pct
 
 
 def _rsi(df: pd.DataFrame, window: int = 14, ob: float = 70.0, os: float = 30.0):
@@ -318,6 +338,9 @@ class MidTermStrategy(Strategy):
         "no_obv": False, "obv_window": 20,
         "no_boll": False, "boll_window": 20, "boll_dev": 2.0,
         "use_rsi_exit": True, "rsi_window": 14, "rsi_ob": 70.0,
+        # BOLL 带宽收口择时增强 (波动率维度; 默认关, 开启后收口期放宽ADX入场)
+        "use_boll_squeeze": False, "boll_rank_window": 60,
+        "boll_squeeze_pct": 0.20, "boll_squeeze_adx_min": 10.0,
         # ATR 波动率收缩→扩张 (入场过滤, 独立维度; 默认关, 按需开启)
         "no_atr_breakout": True, "atr_squeeze_window": 20, "atr_squeeze_pct": 0.5,
         # 退出
@@ -347,10 +370,15 @@ class MidTermStrategy(Strategy):
         wk_long, _, _ = _weekly_kdj(df)
         obv_bull, _ = _obv(df, window=p["obv_window"])
         trix_bull, _, _ = _trix(df, window=p["trix_window"], signal_window=p["trix_signal"])
-        boll_bull, _, _, _ = _boll(df, window=p["boll_window"], dev=p["boll_dev"])
+        boll_bull, _, _, _, _ = _boll(df, window=p["boll_window"], dev=p["boll_dev"])
         rsi_s, rsi_ob, _ = _rsi(df, window=p["rsi_window"], ob=p["rsi_ob"])
         atr_s = _atr(df, p["atr"])
         adx_s, _, _ = _adx(df, p["adx"])
+        # BOLL 带宽收口 (波动率状态: 蓄力期择时增强, 默认关)
+        boll_squeeze, _ = _boll_squeeze(
+            df, bw_window=p["boll_window"],
+            bw_rank_window=p.get("boll_rank_window", 60),
+            squeeze_pct=p.get("boll_squeeze_pct", 0.20))
         # ATR 波动率收缩→扩张 (默认关; 开启时作为入场过滤, 独立维度)
         atr_breakout_ok = None
         if not p.get("no_atr_breakout", True):
@@ -409,20 +437,33 @@ class MidTermStrategy(Strategy):
                 pass
 
         # --- 入场信号: MACD多头 & 周KDJ多头 & ADX趋势强 & TRIX & OBV & BOLL ---
-        entries = macd_bull.copy()
-        if not p["no_weekly"]:
-            entries = entries & wk_long
-        if not p["no_adx"]:
-            entries = entries & (adx_s >= p["adx_entry_min"])
-        # TRIX 趋势过滤: 中长期趋势向上 (默认开; no_trix=True 可关闭)
-        if not p["no_trix"]:
-            entries = entries & trix_bull
-        # OBV 量能过滤: 资金持续流入 (近N日OBV创新高, 量在价先; 默认开; no_obv=True 可关闭)
-        if not p["no_obv"]:
-            entries = entries & obv_bull
-        # BOLL 通道过滤: 收盘站上布林中轨 (中轨即MA20, 波动率维度)
-        if not p["no_boll"]:
-            entries = entries & boll_bull
+        # 严格入场 (6因子AND); BOLL收口期(蓄力)择时增强: 放宽ADX+跳过周KDJ抓启动点
+        # 收口期趋势因子常钝化(周KDJ), 故蓄力期跳过周KDJ并用宽松ADX, 等待方向选择
+        use_squeeze = bool(p.get("use_boll_squeeze", False))
+        if use_squeeze:
+            adx_loose = adx_s >= p.get("boll_squeeze_adx_min", 10.0)
+            # 收口期: MACD & OBV & TRIX & BOLL & (宽松ADX或严格ADX) — 跳过周KDJ
+            # 非收口期: 完整6因子
+            base = macd_bull & obv_bull
+            if not p["no_trix"]: base = base & trix_bull
+            if not p["no_boll"]: base = base & boll_bull
+            adx_strict = (adx_s >= p["adx_entry_min"]) if not p["no_adx"] else pd.Series(True, index=df.index)
+            adx_part = (boll_squeeze & adx_loose) | (~boll_squeeze & adx_strict)
+            entries = base & adx_part
+            if not p["no_weekly"]:
+                entries = entries & (~boll_squeeze | wk_long)   # 收口期跳过周KDJ
+        else:
+            entries = macd_bull.copy()
+            if not p["no_weekly"]:
+                entries = entries & wk_long
+            if not p["no_adx"]:
+                entries = entries & (adx_s >= p["adx_entry_min"])
+            if not p["no_trix"]:
+                entries = entries & trix_bull
+            if not p["no_obv"]:
+                entries = entries & obv_bull
+            if not p["no_boll"]:
+                entries = entries & boll_bull
         # ATR 波动率收缩→扩张: 变盘启动点 (独立维度, 默认关)
         if not p.get("no_atr_breakout", True) and atr_breakout_ok is not None:
             entries = entries & atr_breakout_ok
