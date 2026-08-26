@@ -9,6 +9,8 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from ta.volume import OnBalanceVolumeIndicator
+from ta.volatility import BollingerBands
+from ta.momentum import RSIIndicator
 from ta.trend import MACD, ADXIndicator, TRIXIndicator
 from ta.momentum import StochasticOscillator
 from ta.volatility import AverageTrueRange
@@ -49,14 +51,33 @@ def _weekly_kdj(df: pd.DataFrame, n: int = 9, k_period: int = 3, d_period: int =
     return daily_long.astype(bool), K, D
 
 
-def _ma_trend(df: pd.DataFrame, period: int = 60):
-    """MA 多空分界。返回 (close>MA 布尔, MA序列)。
+def _boll(df: pd.DataFrame, window: int = 20, dev: float = 2.0):
+    """BOLL 布林带 (波动率/价格通道, 独立于趋势维度)。
 
-    定位: 只允许做多过滤, 不抢金叉投票 (避免与 MACD 共线)。
+    多头状态 = 收盘价站上布林中轨 (MA20)。与单纯 MA 向上不同:
+    BOLL 中轨即 MA20, 但带宽度量波动率, 可供通道突破/收口判断扩展。
+    返回 (多头布尔, 中轨序列, 上轨, 下轨)。
     """
     close = df["close"].astype(float)
-    ma = close.rolling(period).mean()
-    return (close > ma).fillna(False), ma
+    bb = BollingerBands(close=close, window=window, window_dev=dev, fillna=False)
+    mid = bb.bollinger_mavg()
+    upper = bb.bollinger_hband()
+    lower = bb.bollinger_lband()
+    boll_bull = (close > mid).fillna(False)
+    return boll_bull, mid, upper, lower
+
+
+def _rsi(df: pd.DataFrame, window: int = 14, ob: float = 70.0, os: float = 30.0):
+    """RSI 相对强弱 (动量超买超卖, 独立于趋势/量能维度)。
+
+    用法 (反向, 非入场AND): 超买(RSI>=ob)提示趋势过热, 供退出端参考; 超卖(RSI<=os)提示企稳。
+    返回 (RSI序列, 超买布尔, 超卖布尔)。
+    """
+    close = df["close"].astype(float)
+    rsi = RSIIndicator(close=close, window=window, fillna=False).rsi()
+    overbought = (rsi >= ob).fillna(False)
+    oversold = (rsi <= os).fillna(False)
+    return rsi, overbought, oversold
 
 
 def _volume_ratio(df: pd.DataFrame, window: int = 20, min_ratio: float = 1.2, lookback: int = 5):
@@ -114,6 +135,27 @@ def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     low = df["low"].astype(float)
     close = df["close"].astype(float)
     return AverageTrueRange(high, low, close, window=period, fillna=False).average_true_range()
+
+
+def _atr_breakout(df: pd.DataFrame, atr_period: int = 14, squeeze_window: int = 20,
+                  squeeze_pct: float = 0.5):
+    """ATR 波动率收缩→扩张 (全新波动率维度, 独立于趋势/量能)。
+
+    逻辑: ATR 处于近 squeeze_window 日低位 (<= 分位 squeeze_pct) 视为"收缩压缩",
+    之后 ATR 环比放大 (今日 ATR > 昨日 ATR) 视为"扩张启动" = 变盘/趋势爆发点。
+    这捕捉的是波动率状态转换, 而非价格方向, 与 MACD/MA/TRIX 趋势因子不共线。
+    返回 (收缩扩张布尔, ATR分位序列)。
+    """
+    atr = _atr(df, atr_period)
+    # ATR 在近 N 日的分位 (0~1)
+    roll_max = atr.rolling(squeeze_window).max()
+    roll_min = atr.rolling(squeeze_window).min()
+    atr_pct = (atr - roll_min) / (roll_max - roll_min).replace(0, np.nan)
+    squeezed = (atr_pct <= squeeze_pct).fillna(False)
+    # 收缩后 ATR 环比放大 = 扩张启动
+    expanding = (atr > atr.shift(1)).fillna(False)
+    breakout = (squeezed & expanding).fillna(False)
+    return breakout, atr_pct
 
 
 def _adx(df: pd.DataFrame, period: int = 14):
@@ -233,11 +275,12 @@ def _build_exits(df, entries, atr_period=14, adx_period=14,
                  use_f15=False, profit_tighten=None, max_retracement=None,
                  use_signal_exit=False, signal_exit=None,
                  use_ma_stop=False, ma_stop_period=20,
-                 f15_exit=None, atr_s=None, adx_s=None):
-    """综合退出 = MA止损 / ATR跟踪止损 + 量价背离(可选) + 趋势反转(可选)。返回 (exits, stop_line)。
+                 f15_exit=None, atr_s=None, adx_s=None, rsi_exit=None):
+    """综合退出 = MA止损 / ATR跟踪止损 + 量价背离(可选) + 趋势反转(可选) + RSI超买(可选)。返回 (exits, stop_line)。
 
     use_ma_stop=True 时使用均线止损, 忽略 ATR 止损参数。
     signal_exit: 预计算的"趋势反转"布尔 Series (如 MACD 死叉日), 传入则叠加为主动退出。
+    rsi_exit: 预计算的"RSI超买"布尔 Series, 传入则叠加为主动止盈。
     f15_exit / atr_s / adx_s: 预计算序列, 传入则跳过内部重复计算。
     """
     if use_ma_stop:
@@ -258,6 +301,8 @@ def _build_exits(df, entries, atr_period=14, adx_period=14,
         exits = exits | f15_exit
     if use_signal_exit and signal_exit is not None:
         exits = exits | signal_exit
+    if rsi_exit is not None:
+        exits = exits | rsi_exit
     return exits.fillna(False), stop_line
 
 
@@ -266,11 +311,15 @@ class MidTermStrategy(Strategy):
     label = "中期量化"
     params = {
         # 信号
-        "vol_min": 1.2, "vol_lookback": 5, "ma_period": 20,
-        "no_weekly": False, "no_ma": False,
+        "vol_min": 1.2, "vol_lookback": 5,
+        "no_weekly": False,
         "no_adx": False, "adx_entry_min": 20.0,
         "no_trix": False, "trix_window": 12, "trix_signal": 9,
         "no_obv": False, "obv_window": 20,
+        "no_boll": False, "boll_window": 20, "boll_dev": 2.0,
+        "use_rsi_exit": True, "rsi_window": 14, "rsi_ob": 70.0,
+        # ATR 波动率收缩→扩张 (入场过滤, 独立维度; 默认关, 按需开启)
+        "no_atr_breakout": True, "atr_squeeze_window": 20, "atr_squeeze_pct": 0.5,
         # 退出
         "atr": 14, "adx": 14,
         "mult_strong": 3.5, "mult_weak": 2.0, "adx_thresh": 30.0,
@@ -296,11 +345,19 @@ class MidTermStrategy(Strategy):
         # --- 因子计算 (只算一次) ---
         macd_bull, _, _ = _macd(df)
         wk_long, _, _ = _weekly_kdj(df)
-        ma_up, _ = _ma_trend(df, p["ma_period"])
         obv_bull, _ = _obv(df, window=p["obv_window"])
         trix_bull, _, _ = _trix(df, window=p["trix_window"], signal_window=p["trix_signal"])
+        boll_bull, _, _, _ = _boll(df, window=p["boll_window"], dev=p["boll_dev"])
+        rsi_s, rsi_ob, _ = _rsi(df, window=p["rsi_window"], ob=p["rsi_ob"])
         atr_s = _atr(df, p["atr"])
         adx_s, _, _ = _adx(df, p["adx"])
+        # ATR 波动率收缩→扩张 (默认关; 开启时作为入场过滤, 独立维度)
+        atr_breakout_ok = None
+        if not p.get("no_atr_breakout", True):
+            atr_breakout_ok, _ = _atr_breakout(
+                df, atr_period=p["atr"],
+                squeeze_window=p.get("atr_squeeze_window", 20),
+                squeeze_pct=p.get("atr_squeeze_pct", 0.5))
 
         # --- 跨股票因子 (闸门/板块/龙头, 默认全关; 开启需全市场数据, 降级自动跳过) ---
         gate_ok = sector_strong_ok = leader_ok = None
@@ -351,12 +408,10 @@ class MidTermStrategy(Strategy):
             except Exception:
                 pass
 
-        # --- 入场信号: MACD多头 & 周KDJ多头 & MA向上 & ADX趋势强 & TRIX & OBV ---
+        # --- 入场信号: MACD多头 & 周KDJ多头 & ADX趋势强 & TRIX & OBV & BOLL ---
         entries = macd_bull.copy()
         if not p["no_weekly"]:
             entries = entries & wk_long
-        if not p["no_ma"]:
-            entries = entries & ma_up
         if not p["no_adx"]:
             entries = entries & (adx_s >= p["adx_entry_min"])
         # TRIX 趋势过滤: 中长期趋势向上 (默认开; no_trix=True 可关闭)
@@ -365,6 +420,12 @@ class MidTermStrategy(Strategy):
         # OBV 量能过滤: 资金持续流入 (近N日OBV创新高, 量在价先; 默认开; no_obv=True 可关闭)
         if not p["no_obv"]:
             entries = entries & obv_bull
+        # BOLL 通道过滤: 收盘站上布林中轨 (中轨即MA20, 波动率维度)
+        if not p["no_boll"]:
+            entries = entries & boll_bull
+        # ATR 波动率收缩→扩张: 变盘启动点 (独立维度, 默认关)
+        if not p.get("no_atr_breakout", True) and atr_breakout_ok is not None:
+            entries = entries & atr_breakout_ok
         # 跨股票过滤层 (默认关; 开启且数据可用时叠加)
         if p.get("use_gate") and gate_ok is not None:
             entries = entries & gate_ok
@@ -397,6 +458,8 @@ class MidTermStrategy(Strategy):
             wk_bear = (~wk_long).reindex(df.index).fillna(False)
             weak_trend = (adx_s < p["adx_thresh"]).reindex(df.index).fillna(False)
             signal_exit = ((macd_bear | wk_bear) & weak_trend).fillna(False)
+        # RSI 超买退出: RSI>=超买线提示趋势过热, 叠加为主动止盈 (默认关, 强趋势股慎用)
+        rsi_exit = rsi_ob.reindex(df.index).fillna(False) if p.get("use_rsi_exit") else None
         exits, stop_line = _build_exits(
             df, entries,
             atr_period=p["atr"], adx_period=p["adx"],
@@ -409,6 +472,7 @@ class MidTermStrategy(Strategy):
             use_ma_stop=p.get("use_ma_stop", False),
             ma_stop_period=p.get("ma_stop_period", 20),
             f15_exit=f15_exit, atr_s=atr_s, adx_s=adx_s,
+            rsi_exit=rsi_exit,
         )
 
         # --- 可视化指标 ---
@@ -423,20 +487,21 @@ class MidTermStrategy(Strategy):
 
         # --- 买卖原因 ---
         reasons = self._build_reasons(df, entries, exits, stop_line, p,
-                                     macd_bull, wk_long, ma_up, adx_s,
-                                     f15_exit, signal_exit, trix_bull, obv_bull)
+                                     macd_bull, wk_long, adx_s,
+                                     f15_exit, signal_exit, trix_bull, obv_bull, boll_bull, rsi_exit,
+                                     atr_breakout_ok)
 
         return SignalResult(entries, exits.fillna(False), indicators, reasons)
 
     def _build_reasons(self, df, entries, exits, stop_line, p,
-                       macd_bull, wk_long, ma_up, adx_s,
-                       f15_exit=None, signal_exit=None, trix_bull=None, obv_bull=None):
+                       macd_bull, wk_long, adx_s,
+                       f15_exit=None, signal_exit=None, trix_bull=None, obv_bull=None,
+                       boll_bull=None, rsi_exit=None, atr_breakout_ok=None):
         """为每个买入/卖出日期生成原因说明。"""
         close = df["close"].astype(float)
 
         buy_flags = [
             (macd_bull, "MACD多头"), (wk_long, "周KDJ多头"),
-            (ma_up, "MA向上"),
         ]
         if not p["no_adx"]:
             buy_flags.append((adx_s >= p["adx_entry_min"], "ADX趋势强"))
@@ -444,8 +509,10 @@ class MidTermStrategy(Strategy):
             buy_flags.append((trix_bull, "TRIX多头"))
         if not p["no_obv"]:
             buy_flags.append((obv_bull, "OBV资金流入"))
-        if not p["no_trix"]:
-            buy_flags.append((trix_bull, "TRIX多头"))
+        if not p["no_boll"]:
+            buy_flags.append((boll_bull, "BOLL站上中轨"))
+        if not p.get("no_atr_breakout", True) and atr_breakout_ok is not None:
+            buy_flags.append((atr_breakout_ok, "ATR波动扩张"))
 
         buy_reasons = {}
         for idx in entries[entries].index:
@@ -464,6 +531,8 @@ class MidTermStrategy(Strategy):
                 parts.append("量价背离")
             if p.get("use_signal_exit") and signal_exit is not None and signal_exit.loc[idx]:
                 parts.append("趋势反转")
+            if p.get("use_rsi_exit") and rsi_exit is not None and rsi_exit.loc[idx]:
+                parts.append("RSI超买")
             ts = int(pd.Timestamp(idx).timestamp() * 1000)
             sell_reasons[ts] = " | ".join(parts) if parts else "退出信号"
 
