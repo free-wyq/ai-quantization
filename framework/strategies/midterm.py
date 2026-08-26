@@ -51,6 +51,28 @@ def _weekly_kdj(df: pd.DataFrame, n: int = 9, k_period: int = 3, d_period: int =
     return daily_long.astype(bool), K, D
 
 
+def _monthly_trend(df: pd.DataFrame, ma_period: int = 20):
+    """月线方向过滤 (多周期共振的最高层: 大周期定方向)。
+
+    月线 = close.resample('M').last(); 月线多头 = 月收盘站上月线MA(ma_period)。
+    作为方向闸门: 月线多头才允许做多, 月线空头全程不做 (不抄底/不逆势, 只抓大趋势)。
+    这是方向过滤而非入场AND: 月线信号慢 (月度更新, 多头期持续数月),
+    过滤的是逆大势的日线假突破, 不与日线趋势因子 (MACD/TRIX/ADX) 共线 (时间尺度不同)。
+
+    防未来函数: 月线信号 reindex ffill 到日度 — 日K只用"最近已收盘月"的信号
+    (月中日K落到上月末信号; 月末日K落到当月信号, 当月收盘同日已知, point-in-time OK)。
+    预热期 (月线MA不足 ma_period 个月) 无信号 → 放行 (True), 不因数据不足误杀;
+    实盘建议回测 --start 提前约2年, 以充分预热月线MA20。
+    返回 (月线多头布尔(日度对齐), 月线MA序列)。
+    """
+    m_close = df["close"].resample("ME").last().astype(float)
+    m_ma = m_close.rolling(ma_period).mean()
+    monthly_long = (m_close > m_ma)
+    # reindex ffill: 日K取最近已收盘月的信号; 预热期NaN → 放行(True)
+    daily_long = monthly_long.reindex(df.index, method="ffill").fillna(True)
+    return daily_long.astype(bool), m_ma
+
+
 def _boll(df: pd.DataFrame, window: int = 20, dev: float = 2.0):
     """BOLL 布林带 (波动率/价格通道, 独立于趋势维度)。
 
@@ -333,6 +355,8 @@ class MidTermStrategy(Strategy):
         # 信号
         "vol_min": 1.2, "vol_lookback": 5,
         "no_weekly": False,
+        # 月线方向过滤 (多周期共振最高层: 月线多头才允许做多; 默认关, 按需开启)
+        "no_monthly": True, "monthly_ma": 20,
         "no_adx": False, "adx_entry_min": 20.0,
         "no_trix": False, "trix_window": 12, "trix_signal": 9,
         "no_obv": False, "obv_window": 20,
@@ -379,6 +403,8 @@ class MidTermStrategy(Strategy):
             df, bw_window=p["boll_window"],
             bw_rank_window=p.get("boll_rank_window", 60),
             squeeze_pct=p.get("boll_squeeze_pct", 0.20))
+        # 月线方向过滤 (多周期共振最高层: 月线多头才允许做多; 默认关)
+        monthly_long, _ = _monthly_trend(df, ma_period=p.get("monthly_ma", 20))
         # ATR 波动率收缩→扩张 (默认关; 开启时作为入场过滤, 独立维度)
         atr_breakout_ok = None
         if not p.get("no_atr_breakout", True):
@@ -467,6 +493,9 @@ class MidTermStrategy(Strategy):
         # ATR 波动率收缩→扩张: 变盘启动点 (独立维度, 默认关)
         if not p.get("no_atr_breakout", True) and atr_breakout_ok is not None:
             entries = entries & atr_breakout_ok
+        # 月线方向过滤 (多周期共振最高层: 月线空头全程不做, 不逆大势; 默认关)
+        if not p.get("no_monthly", True):
+            entries = entries & monthly_long
         # 跨股票过滤层 (默认关; 开启且数据可用时叠加)
         if p.get("use_gate") and gate_ok is not None:
             entries = entries & gate_ok
@@ -530,14 +559,14 @@ class MidTermStrategy(Strategy):
         reasons = self._build_reasons(df, entries, exits, stop_line, p,
                                      macd_bull, wk_long, adx_s,
                                      f15_exit, signal_exit, trix_bull, obv_bull, boll_bull, rsi_exit,
-                                     atr_breakout_ok)
+                                     atr_breakout_ok, monthly_long)
 
         return SignalResult(entries, exits.fillna(False), indicators, reasons)
 
     def _build_reasons(self, df, entries, exits, stop_line, p,
                        macd_bull, wk_long, adx_s,
                        f15_exit=None, signal_exit=None, trix_bull=None, obv_bull=None,
-                       boll_bull=None, rsi_exit=None, atr_breakout_ok=None):
+                       boll_bull=None, rsi_exit=None, atr_breakout_ok=None, monthly_long=None):
         """为每个买入/卖出日期生成原因说明。"""
         close = df["close"].astype(float)
 
@@ -554,6 +583,8 @@ class MidTermStrategy(Strategy):
             buy_flags.append((boll_bull, "BOLL站上中轨"))
         if not p.get("no_atr_breakout", True) and atr_breakout_ok is not None:
             buy_flags.append((atr_breakout_ok, "ATR波动扩张"))
+        if not p.get("no_monthly", True) and monthly_long is not None:
+            buy_flags.append((monthly_long, "月线多头"))
 
         buy_reasons = {}
         for idx in entries[entries].index:
