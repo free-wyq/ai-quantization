@@ -24,15 +24,15 @@ from data.fetcher import fetch_stock_history
 from framework.strategies import STRATS
 
 # ===== 各策略参数搜索网格 =====
+# 聚焦趋势/回撤杠杆 (符合"只抓趋势低回撤"理念), 不搜已废弃因子 (ma/vol_ratio 已删)
 PARAM_GRIDS = {
     "midterm": {
-        "ma_period": [10, 20, 30],
-        "vol_min": [1.0, 1.2, 1.5],
-        "vol_lookback": [3, 5],
-        "mult_weak": [1.5, 2.0, 2.5],
-        "mult_strong": [3.0, 3.5],
-        "no_weekly": [False, True],
-        "no_vol": [False, True],
+        "adx_entry_min": [15, 20, 25],        # 趋势强度门槛: 低=信号多, 高=只做强趋势
+        "mult_weak": [1.5, 2.0, 2.5],         # 弱趋势止损倍数: 越紧回撤越小但易被震出
+        "mult_strong": [3.0, 3.5],             # 强趋势止损倍数: 越宽越能吃满趋势
+        "no_monthly": [True, False],          # 月线方向过滤: False=只做月线多头(只抓大趋势)
+        "rsi_ob": [65, 70, 75],               # RSI超买退出线: 越低越早止盈降回撤
+        "no_weekly": [False, True],           # 周KDJ: 关掉则放宽入场
     },
 }
 
@@ -65,7 +65,10 @@ def optimize(strategy_key, symbol, start="20250101", end="20260818"):
     """网格搜索 + 样本外验证"""
     # 1. 获取数据
     df = fetch_stock_history(symbol, start, end).copy()
-    df = df[["open", "high", "low", "close", "volume"]].dropna()
+    # 透传完整行情列 (含 symbol/换手率), midterm 复合策略需要; 原5列策略忽略多余列
+    keep = ["open", "high", "low", "close", "volume", "amount", "turnover_rate", "symbol"]
+    keep = [c for c in keep if c in df.columns]
+    df = df[keep].dropna()
 
     # 2. 训练/测试拆分 (时间序列, 不能随机打乱)
     split_idx = int(len(df) * TRAIN_RATIO)

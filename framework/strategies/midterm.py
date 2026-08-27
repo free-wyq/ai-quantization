@@ -138,19 +138,23 @@ def _volume_ratio(df: pd.DataFrame, window: int = 20, min_ratio: float = 1.2, lo
     return raw, ratio
 
 
-def _obv(df: pd.DataFrame, window: int = 20):
+def _obv(df: pd.DataFrame, window: int = 20, ma_window: int = 30):
     """OBV 能量潮 (量在价先)。
 
     OBV = 累计成交量 (涨日加, 跌日减, 平盘不变), 反映资金持续流入/流出。
-    多头状态 = OBV 在近 window 日创新高 (资金持续流入, 趋势有量能支撑)。
+    多头状态 = OBV 在其均线上方 (资金整体流入, 趋势有量能支撑)。
     比"量比放大"更扎实: 量比只看单日放量, OBV 看累计资金方向 (中长期量能)。
+
+    注: 曾用"近 window 日创新高"门槛, 实测满足率仅 ~15% (大涨股高位盘整期 OBV
+    不再创新高即卡死, 信号瓶颈), 故改为"站上均线" (持续流入即可, 不要求天天新高),
+    满足率约 40~60%, 不再堵死其他趋势因子。
     返回 (多头布尔, OBV序列)。
     """
     close = df["close"].astype(float)
     vol = df["volume"].astype(float)
     obv = OnBalanceVolumeIndicator(close=close, volume=vol, fillna=False).on_balance_volume()
-    obv_max = obv.rolling(window).max()
-    obv_bull = (obv >= obv_max).fillna(False)
+    obv_ma = obv.rolling(ma_window).mean()
+    obv_bull = (obv > obv_ma).fillna(False)
     return obv_bull, obv
 
 
@@ -359,9 +363,9 @@ class MidTermStrategy(Strategy):
         "no_monthly": True, "monthly_ma": 20,
         "no_adx": False, "adx_entry_min": 20.0,
         "no_trix": False, "trix_window": 12, "trix_signal": 9,
-        "no_obv": False, "obv_window": 20,
+        "no_obv": False, "obv_window": 20, "obv_ma_window": 30,
         "no_boll": False, "boll_window": 20, "boll_dev": 2.0,
-        "use_rsi_exit": True, "rsi_window": 14, "rsi_ob": 70.0,
+        "use_rsi_exit": False, "rsi_window": 14, "rsi_ob": 70.0,
         # BOLL 带宽收口择时增强 (波动率维度; 默认关, 开启后收口期放宽ADX入场)
         "use_boll_squeeze": False, "boll_rank_window": 60,
         "boll_squeeze_pct": 0.20, "boll_squeeze_adx_min": 10.0,
@@ -371,7 +375,9 @@ class MidTermStrategy(Strategy):
         "atr": 14, "adx": 14,
         "mult_strong": 3.5, "mult_weak": 2.0, "adx_thresh": 30.0,
         "use_f15": False,
-        "profit_tighten": [(0.10, 2.5), (0.20, 2.0)], "max_retracement": 0.25,
+        # B路径(低胜率高赔率): 利润<30% 不收紧止损, 让利润奔跑吃满趋势;
+        # 大赚后(30%/60%)才逐步锁利, 避免早止盈砍掉主升浪
+        "profit_tighten": [(0.30, 3.0), (0.60, 2.5)], "max_retracement": 0.25,
         "use_signal_exit": False,
         "use_ma_stop": False, "ma_stop_period": 20,
         # 跨股票过滤层 (默认全关, 开启需 data/ 下全市场数据; 数据不全自动降级跳过)
@@ -392,7 +398,7 @@ class MidTermStrategy(Strategy):
         # --- 因子计算 (只算一次) ---
         macd_bull, _, _ = _macd(df)
         wk_long, _, _ = _weekly_kdj(df)
-        obv_bull, _ = _obv(df, window=p["obv_window"])
+        obv_bull, _ = _obv(df, window=p["obv_window"], ma_window=p.get("obv_ma_window", 30))
         trix_bull, _, _ = _trix(df, window=p["trix_window"], signal_window=p["trix_signal"])
         boll_bull, _, _, _, _ = _boll(df, window=p["boll_window"], dev=p["boll_dev"])
         rsi_s, rsi_ob, _ = _rsi(df, window=p["rsi_window"], ob=p["rsi_ob"])
@@ -480,8 +486,6 @@ class MidTermStrategy(Strategy):
                 entries = entries & (~boll_squeeze | wk_long)   # 收口期跳过周KDJ
         else:
             entries = macd_bull.copy()
-            if not p["no_weekly"]:
-                entries = entries & wk_long
             if not p["no_adx"]:
                 entries = entries & (adx_s >= p["adx_entry_min"])
             if not p["no_trix"]:
@@ -490,6 +494,12 @@ class MidTermStrategy(Strategy):
                 entries = entries & obv_bull
             if not p["no_boll"]:
                 entries = entries & boll_bull
+            if not p["no_weekly"]:
+                # 周KDJ软过滤(非硬AND): 强趋势(ADX>=阈值)跳过周KDJ(强趋势期周KDJ钝化不可信,
+                # 硬AND会踏空主升浪, 如 300308 2023-03翻倍行情全程被周KDJ False 卡死);
+                # 弱趋势才用周KDJ过滤, 避免震荡市假信号。
+                weekly_strong = adx_s >= p["adx_thresh"]
+                entries = entries & (weekly_strong | wk_long)
         # ATR 波动率收缩→扩张: 变盘启动点 (独立维度, 默认关)
         if not p.get("no_atr_breakout", True) and atr_breakout_ok is not None:
             entries = entries & atr_breakout_ok
