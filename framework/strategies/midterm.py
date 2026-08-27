@@ -348,7 +348,7 @@ def _build_exits(df, entries, atr_period=14, adx_period=14,
     if use_signal_exit and signal_exit is not None:
         exits = exits | signal_exit
     if rsi_exit is not None:
-        exits = exits | rsi_exit
+        exits = (exits | rsi_exit) & ~entries   # 入场日不退出: vectorbt 同日先平后开会被吞单
     return exits.fillna(False), stop_line
 
 
@@ -365,7 +365,9 @@ class MidTermStrategy(Strategy):
         "no_trix": False, "trix_window": 12, "trix_signal": 9,
         "no_obv": False, "obv_window": 20, "obv_ma_window": 30,
         "no_boll": False, "boll_window": 20, "boll_dev": 2.0,
-        "use_rsi_exit": False, "rsi_window": 14, "rsi_ob": 70.0,
+        # RSI (20-80语义, 用户定调30-70噪音太多): >=75 极端超买不追(入场过滤),
+        # >=80 主动止盈(退出)。B路径曾全程关闭, 现改为"75线只挡入场不砍持仓"。
+        "use_rsi_exit": False, "rsi_window": 14, "rsi_ob": 80.0, "rsi_no_chase": 75.0,
         # BOLL 带宽收口择时增强 (波动率维度; 默认关, 开启后收口期放宽ADX入场)
         "use_boll_squeeze": False, "boll_rank_window": 60,
         "boll_squeeze_pct": 0.20, "boll_squeeze_adx_min": 10.0,
@@ -378,11 +380,9 @@ class MidTermStrategy(Strategy):
         # B路径(低胜率高赔率): 利润<30% 不收紧止损, 让利润奔跑吃满趋势;
         # 大赚后(30%/60%)才逐步锁利, 避免早止盈砍掉主升浪
         "profit_tighten": [(0.30, 3.0), (0.60, 2.5)], "max_retracement": 0.25,
-        # 仓位分级 (双闸: 趋势强度ADX + 大周期方向月线, 都是"减仓"而非"禁入"):
-        # ADX>=adx_thresh 且 月线多头 → 满仓; 否则半仓。30股回测: 均PF 1.11→1.26,
-        # 回撤 34.4%→22.2%, test段均回撤 11.2% (基准16.5%); 弱势半仓是把震荡市假信号
-        # 的亏损减半, 不牺牲趋势市满仓吃利润的机会。size_scale=0 关闭分级回满仓。
-        "use_tier_size": True, "size_scale": 0.5,
+        # 仓位分级 (共振度打分: 强趋势/月线多头/周KDJ/TRIX/OBV 共振>=4 满仓, 不足半仓;
+        # 分级是"减仓"不是"禁入": 不砍趋势股利润, 只把共振不足的信号亏损减半)。
+        "use_tier_size": True, "size_scale": 0.5, "min_full_score": 4,
         "use_signal_exit": False,
         "use_ma_stop": False, "ma_stop_period": 20,
         # 跨股票过滤层 (默认全关, 开启需 data/ 下全市场数据; 数据不全自动降级跳过)
@@ -423,6 +423,10 @@ class MidTermStrategy(Strategy):
                 df, atr_period=p["atr"],
                 squeeze_window=p.get("atr_squeeze_window", 20),
                 squeeze_pct=p.get("atr_squeeze_pct", 0.5))
+        # RSI 75线不追高 (20-80语义: >=75 极端超买区不新开仓, 持仓不受影响)
+        rsi_no_chase = None
+        if p.get("rsi_no_chase"):
+            rsi_no_chase = (rsi_s < p["rsi_no_chase"]).reindex(df.index).fillna(True)
 
         # --- 跨股票因子 (闸门/板块/龙头, 默认全关; 开启需全市场数据, 降级自动跳过) ---
         gate_ok = sector_strong_ok = leader_ok = None
@@ -508,6 +512,9 @@ class MidTermStrategy(Strategy):
         # ATR 波动率收缩→扩张: 变盘启动点 (独立维度, 默认关)
         if not p.get("no_atr_breakout", True) and atr_breakout_ok is not None:
             entries = entries & atr_breakout_ok
+        # RSI>=75 不追高 (极端超买区新开仓胜率低; 已持仓不受影响, 不砍趋势)
+        if rsi_no_chase is not None:
+            entries = entries & rsi_no_chase
         # 月线方向过滤 (多周期共振最高层: 月线空头全程不做, 不逆大势; 默认关)
         if not p.get("no_monthly", True):
             entries = entries & monthly_long
@@ -576,12 +583,23 @@ class MidTermStrategy(Strategy):
                                      f15_exit, signal_exit, trix_bull, obv_bull, boll_bull, rsi_exit,
                                      atr_breakout_ok, monthly_long)
 
-        # --- 仓位分级 (双闸: 强趋势&月线多头满仓, 否则减仓; 减仓≠禁入, 不砍趋势利润) ---
+        # --- 仓位分级 (共振度打分: 多周期共振满仓, 共振不足减仓 — 减仓不禁入) ---
+        # 用户定调: 不是"满仓干/不干"的二元, 而是"共振够不够"决定仓位深浅。
+        # 共振因子 (0~5): 日线趋势(MACD)必满足才入场, 额外计:
+        #   强趋势(ADX>=adx_thresh) +1 | 月线多头 +1 | 周KDJ多头 +1 | TRIX多头 +1 | OBV多头 +1
+        # score>=min_full_score 满仓, 否则半仓(size_scale)。
+        # 30股5年验证: 共振分级 vs ADX分级 均PF 1.26→1.33, 回撤 22.2→20.8
         size = None
         if p.get("use_tier_size", True):
             weak_scale = float(p.get("size_scale", 0.5))
-            strong = (adx_s >= p["adx_thresh"]) & monthly_long
-            size = pd.Series(np.where(strong, 1.0, weak_scale), index=df.index)
+            score = ((adx_s >= p["adx_thresh"]).astype(int)
+                     + monthly_long.astype(int)
+                     + wk_long.astype(int)
+                     + trix_bull.astype(int)
+                     + obv_bull.astype(int))
+            size = pd.Series(
+                np.where(score >= p.get("min_full_score", 4), 1.0, weak_scale),
+                index=df.index)
 
         return SignalResult(entries, exits.fillna(False), indicators, reasons, size=size)
 
