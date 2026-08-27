@@ -215,7 +215,7 @@ ADX策略5年回撤只有19%，所有策略中最低
   → 收益降到30%，但Sharpe可能更高
 ```
 
-> Kelly 仓位理论见本文第二部分第三章。**当前 midterm 未接入 size 仓位层**（`generate()` 不返回 size，回测走等权满仓），Kelly/分级/ADX 仓位是理论目标与未来接入项。
+> Kelly 仓位理论见本文第二部分第三章。**midterm 已接入仓位分级**（`generate()` 返回 size：多周期共振分≥4 满仓、不足半仓，减仓不禁入），Kelly 动态仓位仍是理论目标。
 
 ---
 
@@ -237,7 +237,7 @@ ADX策略5年回撤只有19%，所有策略中最低
 | 8 | Turtle进出场用同一周期(20/20) | `turtle.py` | 已删 |
 | 9 | 成本模型不精确（无最小手续费、无过户费区分） | `run.py` | 待办 |
 
-**框架级缺失（部分已补）**：✓ 看板可视化 + 信号分级理论 + 成交量确认(midterm 量比过滤)；✗ 仓位管理（理论已定，未接入 midterm）/ 分年度统计 / 组合回测 / 并行执行 / 指数ETF数据。
+**框架级缺失（部分已补）**：✓ 看板可视化 + 信号分级理论 + 成交量确认(midterm 量比过滤) + 仓位分级(midterm 已接入共振度分级 size)；✗ 分年度统计 / 组合回测 / 并行执行 / 指数ETF数据。
 
 ---
 
@@ -247,7 +247,25 @@ ADX策略5年回撤只有19%，所有策略中最低
 
 - **紧急修bug(①-⑤)**：①日期硬编码→已修；②④⑤ kdj/regime/trend_rider 网格与死参数→策略已删，只留 midterm grid；③ ATR 重复三份→统一到 `factors/exit.py`。
 - **高收益改进(⑥-⑩)**：⑥ 统一 ATR 退出→midterm 已是统一退出；⑨ ADX 过滤→midterm 第4层用 ADX 定止损宽度；⑩ 量比确认→已落地(midterm._volume_ratio 量比>1.2 入场过滤)；⑦⑧ 策略已删。
-- **框架升级(⑪-⑭)**：⑪ 仓位管理→理论已定(Kelly×ADX+分级)，**midterm 尚未接入**；⑫分年度统计/⑬并行/⑭指数ETF→待办（见本文第三部分）。
+- **框架升级(⑪-⑭)**：⑪ 仓位管理→**已接入**(2026-08, 共振度仓位分级 `use_tier_size`: 多周期共振分0~5, score≥4 满仓否则半仓, 减仓不禁入; 详见第一部分第十二章)；⑫分年度统计/⑬并行/⑭指数ETF→待办（见本文第三部分）。
+
+### B路径演进（2026-08，低胜率高赔率）
+
+midterm 从"高胜率网格"转向 **B路径：小亏认、大赚吃**（低胜率~40% + 高赔率PF 2-4）。
+30股×5年回测驱动，参数杠杆已系统试尽（止损收紧/回撤收紧/信号退出/时间止损/入场提门槛全部
+无效——误伤趋势股或被ATR线压制），最终正向杠杆只有三个：
+
+1. **入场松绑**：OBV 创新高→站上MA30（创新高满足率仅15%堵死信号）；周KDJ 硬AND→软过滤
+   （强趋势 ADX≥30 钝化不可信，跳过防踏空主升浪，如 300308 2023-03 翻倍行情）
+2. **退出端让利润跑**：RSI 70 早止盈关；profit_tighten 从 (10%,2.5)/(20%,2.0) 放宽到
+   (30%,3.0)/(60%,2.5)——利润<30% 不收紧
+3. **共振度仓位分级**（减仓不禁入）：强趋势ADX/月线多头/周KDJ/TRIX/OBV 共振分0~5，
+   score≥4 满仓否则半仓。**用户定调：共振不足只该减仓不该禁入**；指标线用 20-80 极端区
+   （30-70 噪音多），RSI≥75 不追高（`rsi_no_chase`，挡入场不砍持仓）
+
+效果：30股均PF 1.11→1.22，中位收益 -1.5%→+4.7%，最差5只股减亏约一半（-35~-46%→-22~-31%）。
+**边界**：当前因子组合(MACD/TRIX/OBV/BOLL/周KDJ/ADX/月线)的调参空间已到顶（均PF 1.2~1.3），
+再提升需新维度因子（资金面/基本面已接线默认关）。
 
 ---
 
@@ -376,7 +394,7 @@ ADX策略5年回撤只有19%，所有策略中最低
 ### 落地要点
 
 - **七层闭环**：闸门(情绪/板块温度) → 板块 → 龙头 → 信号(周KDJ+MACD+MA+量比) → 环境(ADX+ATR定止损宽度) → 退出(ATR跟踪/量价背离) → 仓位(Kelly×ADX系数)。详见第二部分。
-- **当前接入状态**：个股信号层(第3层) + 退出(第5层) 已在 `midterm.generate()` 实现（信号因子 `_macd/_weekly_kdj/_ma_trend/_volume_ratio` 内联在 midterm.py）。**跨股票过滤层(第0/1/2层 闸门/板块/龙头)已接入** `framework/factors/cross_stock.py`（全市场状态缓存，按 symbol 切片），**资金面因子已接入** `framework/factors/flow.py`（北向净流入 + 个股主力净流入），**基本面排雷已接入** `framework/factors/fundamental.py`（PE/PB 分位 + ROE(TTM) + 商誉占比）——三类均**默认全关**，`use_gate/use_sector_strong/use_leader/use_northbound/use_main_flow/use_valuation/use_quality/use_goodwill` 逐个开启观察效果，取数失败自动降级跳过。**仓位层(第6层) Kelly 理论已定但尚未接入**——`generate()` 不返回 size，回测走等权满仓。
+- **当前接入状态**：个股信号层(第3层) + 退出(第5层) 已在 `midterm.generate()` 实现（信号因子 `_macd/_weekly_kdj/_ma_trend/_volume_ratio` 内联在 midterm.py）。**跨股票过滤层(第0/1/2层 闸门/板块/龙头)已接入** `framework/factors/cross_stock.py`（全市场状态缓存，按 symbol 切片），**资金面因子已接入** `framework/factors/flow.py`（北向净流入 + 个股主力净流入），**基本面排雷已接入** `framework/factors/fundamental.py`（PE/PB 分位 + ROE(TTM) + 商誉占比）——三类均**默认全关**，`use_gate/use_sector_strong/use_leader/use_northbound/use_main_flow/use_valuation/use_quality/use_goodwill` 逐个开启观察效果，取数失败自动降级跳过。**仓位层(第6层)已接入共振度分级**（2026-08）——`generate()` 返回 size：多周期共振分(强趋势ADX/月线多头/周KDJ/TRIX/OBV 共0~5)≥4 满仓、不足半仓(size_scale=0.5)，减仓不禁入。Kelly 动态仓位仍是理论目标。
   - ⚠️ **架构债（待重构）**：上述三类选股因子当前通过 `entries = entries & xxx` 混在 `generate()` 末尾，违反「选股与回测分离」单一职责。按第三部分「3.1 选股与回测分离」设计，静态选股迁入 `select()` 钩子、动态跨股票迁入独立 `MarketRegime` 模块、`generate()` 回归纯单股择时。这是后续重构方向，不立即动代码。
 - **因子库**：纯函数（日K进，等长对齐 Series 出），见 `framework/factors/`。当前因子库涵盖：`market_state`(广度/温度) / `sector_trend`(板块强势) / `leader`(龙头) / `cross_stock`(跨股票缓存) / `flow`(资金面) / `fundamental`(基本面排雷)。
 - **代码重构史**：基类模板方法（`run()` 骨架 + 子类 `generate()` 钩子 + `SignalResult`，公共指标 MA系统由基类统一组装）→ 信号因子从 `factors/signal.py` 内联进 midterm.py（signal.py 已清空）。详见 git log。
@@ -477,7 +495,7 @@ MACD金叉 + MA多头 + 放量 → 胜率 ~55%
 
 midterm 的分级**设计在仓位层落地**：`entry 日 = A 级（满半Kelly系数）`，其余 = B 级（半半Kelly），再乘 ADX 系数（强趋势1.0/弱0.6/<20为0不持仓）。
 
-> **当前实现状态**：分级与 Kelly 仓位是设计目标，midterm `generate()` 目前不返回 size，回测走等权满仓。接线后 `framework/strategies/midterm.py` 的 `_compute_size` 负责落地。
+> **当前实现状态**：分级已接入（共振度打分≥4满仓否则半仓，midterm `generate()` 返回 size），Kelly 动态仓位仍是设计目标。
 
 ---
 
@@ -576,7 +594,7 @@ f* = (p × b - q) / b
   注意: 加仓后止损线上移到整体盈亏平衡点
 ```
 
-> **当前实现状态**：Kelly/分级/ADX 仓位是理论目标，midterm `generate()` 暂不返回 size，回测等权满仓。接线见本文第一部分第十二章。
+> **当前实现状态**：共振度分级已接入（midterm `generate()` 返回 size，减仓不禁入），Kelly/动态仓位仍是理论目标。详见第一部分第十二章。
 
 ---
 
@@ -684,7 +702,7 @@ f* = (p × b - q) / b
 
 - 只能跑一只股票，无组合概念
 - 跨股票/资金面/基本面因子已接入但**默认全关**（需联网取数，逐个开启观察效果；数据源在 WSL 环境部分受限：东财域名 SSL 不通，百度估值/新浪财务可用）
-- **仓位层未接入**：midterm `generate()` 不返回 size，回测等权满仓，Kelly/分级理论待接线
+- **仓位层已接入**：共振度分级（size 满仓/半仓），Kelly 动态仓位待接线
 - 无实盘对接
 
 ---
