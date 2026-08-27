@@ -217,7 +217,9 @@ def _trailing_stop_exits(df, entries, atr_series, adx_series,
                          mult_strong: float = 3.5, mult_weak: float = 2.0,
                          adx_thresh: float = 30.0,
                          profit_tighten=None,
-                         max_retracement: float = None):
+                         max_retracement: float = None,
+                         atr_norm_target: float = 0.0,
+                         atr_norm_clip=(0.6, 1.6)):
     """ATR 跟踪止损 (F14) + 利润保护 + 最大回撤止盈。
 
     止损线 = 持仓最高价 - mult*ATR, 只上移不下移。触碰即卖。
@@ -228,6 +230,10 @@ def _trailing_stop_exits(df, entries, atr_series, adx_series,
     注意: profit_pct 是"小数" (1.0 = 100% 盈利)。盈利 10% 应写 0.1。
 
     max_retracement: 如 0.25 表示从持仓最高价回落 25% 即退出。
+
+    atr_norm_target: >0 时启用波动率归一止损 — mult_eff = mult * (target/ATR%),
+    截断在 [norm_clip_lo, norm_clip_hi] (默认0.6~1.6)。动机: 固定 mult 下低波股
+    (神华 ATR%≈2.8)止损距离过窄, 被日内噪音扫出 (60股验证: ATR%<2.5 组均PF 1.02 vs 高波组 1.38)。
     返回 (exits布尔, stop_line序列)。
     """
     close = df["close"].astype(float)
@@ -235,6 +241,11 @@ def _trailing_stop_exits(df, entries, atr_series, adx_series,
     base_mult = pd.Series(np.where(adx_series >= adx_thresh, mult_strong, mult_weak),
                           index=df.index).astype(float)
     atr_safe = atr_series.fillna(0.0)
+    if atr_norm_target and atr_norm_target > 0:
+        # ATR% = ATR/收盘价; 归一系数 = target/ATR%, 截断防极端
+        atr_pct = (atr_safe / close).clip(lower=1e-4)
+        norm = (atr_norm_target / atr_pct).clip(atr_norm_clip[0], atr_norm_clip[1])
+        base_mult = (base_mult * norm).clip(1.5, 8.0)
     stop_line = pd.Series(np.nan, index=df.index)
     exits = pd.Series(False, index=df.index)
     in_pos = False
@@ -321,13 +332,15 @@ def _build_exits(df, entries, atr_period=14, adx_period=14,
                  use_f15=False, profit_tighten=None, max_retracement=None,
                  use_signal_exit=False, signal_exit=None,
                  use_ma_stop=False, ma_stop_period=20,
-                 f15_exit=None, atr_s=None, adx_s=None, rsi_exit=None):
+                 f15_exit=None, atr_s=None, adx_s=None, rsi_exit=None,
+                 atr_norm_target=0.0, atr_norm_clip=(0.6, 1.6)):
     """综合退出 = MA止损 / ATR跟踪止损 + 量价背离(可选) + 趋势反转(可选) + RSI超买(可选)。返回 (exits, stop_line)。
 
     use_ma_stop=True 时使用均线止损, 忽略 ATR 止损参数。
     signal_exit: 预计算的"趋势反转"布尔 Series (如 MACD 死叉日), 传入则叠加为主动退出。
     rsi_exit: 预计算的"RSI超买"布尔 Series, 传入则叠加为主动止盈。
     f15_exit / atr_s / adx_s: 预计算序列, 传入则跳过内部重复计算。
+    atr_norm_target: 波动率归一止损目标 (传给 _trailing_stop_exits, 0=关)。
     """
     if use_ma_stop:
         base_exit, stop_line = _ma_stop_exits(df, entries, ma_period=ma_stop_period)
@@ -339,7 +352,8 @@ def _build_exits(df, entries, atr_period=14, adx_period=14,
         base_exit, stop_line = _trailing_stop_exits(
             df, entries, atr_s, adx_s,
             mult_strong=mult_strong, mult_weak=mult_weak, adx_thresh=adx_thresh,
-            profit_tighten=profit_tighten, max_retracement=max_retracement)
+            profit_tighten=profit_tighten, max_retracement=max_retracement,
+            atr_norm_target=atr_norm_target, atr_norm_clip=atr_norm_clip)
     exits = base_exit
     if use_f15:
         if f15_exit is None:
@@ -376,6 +390,9 @@ class MidTermStrategy(Strategy):
         # 退出
         "atr": 14, "adx": 14,
         "mult_strong": 3.5, "mult_weak": 2.0, "adx_thresh": 30.0,
+        # 波动率归一止损: >0 时 mult 按 target/ATR% 缩放 (截断 norm_lo~norm_hi),
+        # 修复低波股(银行/公用事业 ATR%<2.5)止损距离过窄被噪音扫损的问题; 0=关
+        "atr_norm_target": 0.0, "atr_norm_lo": 0.6, "atr_norm_hi": 1.6,
         "use_f15": False,
         # B路径(低胜率高赔率): 利润<30% 不收紧止损, 让利润奔跑吃满趋势;
         # 大赚后(30%/60%)才逐步锁利, 避免早止盈砍掉主升浪
@@ -565,6 +582,8 @@ class MidTermStrategy(Strategy):
             ma_stop_period=p.get("ma_stop_period", 20),
             f15_exit=f15_exit, atr_s=atr_s, adx_s=adx_s,
             rsi_exit=rsi_exit,
+            atr_norm_target=p.get("atr_norm_target", 0.0),
+            atr_norm_clip=(p.get("atr_norm_lo", 0.6), p.get("atr_norm_hi", 1.6)),
         )
 
         # --- 可视化指标 ---
