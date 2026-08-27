@@ -122,6 +122,21 @@ def _rsi(df: pd.DataFrame, window: int = 14, ob: float = 70.0, os: float = 30.0)
     return rsi, overbought, oversold
 
 
+def _ma_entry_gate(df: pd.DataFrame, period: int = 30):
+    """MA 入场闸门 (防御层): 收盘 < MA(period) 时禁止新开仓, 持仓不受影响。
+
+    语义是"线下不新开参与"而非"线下不参与": 躲避下跌趋势中的逆势抄底入场,
+    退出仍由 ATR 跟踪止损负责 — 不用短期均线砍持仓 (60股验证: MA30清仓版
+    把策略打亏, 均收益 5.5→-0.0, 趋势股被洗盘线反复踢出)。
+    防未来函数: MA 当日收盘可得, 当日信号用当日MA, point-in-time OK。
+    返回 (低于MA布尔, MA序列); 预热期 NaN → 不挡 (False)。
+    """
+    close = df["close"].astype(float)
+    ma = close.rolling(period).mean()
+    below = (close < ma).fillna(False)
+    return below.astype(bool), ma
+
+
 def _volume_ratio(df: pd.DataFrame, window: int = 20, min_ratio: float = 1.2, lookback: int = 5):
     """[已废弃] 量比确认 (F13)。被 _obv 取代, 保留供 use_f15 量价背离退出复用。
 
@@ -387,6 +402,9 @@ class MidTermStrategy(Strategy):
         "boll_squeeze_pct": 0.20, "boll_squeeze_adx_min": 10.0,
         # ATR 波动率收缩→扩张 (入场过滤, 独立维度; 默认关, 按需开启)
         "no_atr_breakout": True, "atr_squeeze_window": 20, "atr_squeeze_pct": 0.5,
+        # MA入场闸门 (防御层, 默认关): 收盘<MA(ma_gate_period) 不新开仓, 持仓不动;
+        # "线下不新开参与" — 躲逆势入场, 退出仍交给ATR跟踪止损
+        "ma_entry_gate": False, "ma_gate_period": 30,
         # 退出
         "atr": 14, "adx": 14,
         "mult_strong": 3.5, "mult_weak": 2.0, "adx_thresh": 30.0,
@@ -444,6 +462,10 @@ class MidTermStrategy(Strategy):
         rsi_no_chase = None
         if p.get("rsi_no_chase"):
             rsi_no_chase = (rsi_s < p["rsi_no_chase"]).reindex(df.index).fillna(True)
+        # MA 入场闸门 (防御层, 默认关): 收盘<MA(period) 禁止新开仓, 持仓不动
+        ma_gate_below = None
+        if p.get("ma_entry_gate"):
+            ma_gate_below, ma_gate_line = _ma_entry_gate(df, period=p.get("ma_gate_period", 30))
 
         # --- 跨股票因子 (闸门/板块/龙头, 默认全关; 开启需全市场数据, 降级自动跳过) ---
         gate_ok = sector_strong_ok = leader_ok = None
@@ -532,6 +554,9 @@ class MidTermStrategy(Strategy):
         # RSI>=75 不追高 (极端超买区新开仓胜率低; 已持仓不受影响, 不砍趋势)
         if rsi_no_chase is not None:
             entries = entries & rsi_no_chase
+        # MA入场闸门 (防御层: 线下不新开参与; 持仓退出交给ATR止损, 不砍趋势)
+        if ma_gate_below is not None:
+            entries = entries & (~ma_gate_below)
         # 月线方向过滤 (多周期共振最高层: 月线空头全程不做, 不逆大势; 默认关)
         if not p.get("no_monthly", True):
             entries = entries & monthly_long
@@ -600,7 +625,7 @@ class MidTermStrategy(Strategy):
         reasons = self._build_reasons(df, entries, exits, stop_line, p,
                                      macd_bull, wk_long, adx_s,
                                      f15_exit, signal_exit, trix_bull, obv_bull, boll_bull, rsi_exit,
-                                     atr_breakout_ok, monthly_long)
+                                     atr_breakout_ok, monthly_long, ma_gate_below)
 
         # --- 仓位分级 (共振度打分: 多周期共振满仓, 共振不足减仓 — 减仓不禁入) ---
         # 用户定调: 不是"满仓干/不干"的二元, 而是"共振够不够"决定仓位深浅。
@@ -625,9 +650,11 @@ class MidTermStrategy(Strategy):
     def _build_reasons(self, df, entries, exits, stop_line, p,
                        macd_bull, wk_long, adx_s,
                        f15_exit=None, signal_exit=None, trix_bull=None, obv_bull=None,
-                       boll_bull=None, rsi_exit=None, atr_breakout_ok=None, monthly_long=None):
+                       boll_bull=None, rsi_exit=None, atr_breakout_ok=None, monthly_long=None,
+                       ma_gate_below=None):
         """为每个买入/卖出日期生成原因说明。"""
         close = df["close"].astype(float)
+        gate_period = p.get("ma_gate_period", 30)
 
         buy_flags = [
             (macd_bull, "MACD多头"), (wk_long, "周KDJ多头"),
@@ -644,6 +671,8 @@ class MidTermStrategy(Strategy):
             buy_flags.append((atr_breakout_ok, "ATR波动扩张"))
         if not p.get("no_monthly", True) and monthly_long is not None:
             buy_flags.append((monthly_long, "月线多头"))
+        if ma_gate_below is not None:
+            buy_flags.append((~ma_gate_below, f"MA{gate_period}线上"))
 
         buy_reasons = {}
         for idx in entries[entries].index:
