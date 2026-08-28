@@ -31,6 +31,28 @@ def _macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9):
     return macd_bull, dif, dea
 
 
+def _weekly_trend(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9):
+    """周线趋势状态 (周MACD DIF>DEA)。返回 (周线多头布尔(日度ffill), 周DIF, 周DEA)。
+
+    三重滤网的"中层": 月线定方向 → **周线定趋势** → 日线定买点。周MACD多头 =
+    大级别上升趋势确认; 日线 MACD 金叉只是具体买点。两者时间尺度不同, 不共线。
+
+    与 _weekly_kdj 的分工: KDJ 是摆动指标, 放在"趋势层"会因强趋势钝化失真
+    (故此前只敢做软过滤); 周MACD才是趋势确认工具, 用于共振打分 (软用法,
+    不做入场硬AND — 周线滞后, 主升浪启动初期周MACD常未转多, 硬AND复刻踏空坑)。
+
+    防未来函数: 与 _weekly_kdj 同 — resample("W") 后 shift(1) 再 ffill 到日度,
+    只引用"已收盘的上周"信号, 不使用尚未收盘的本周。
+    """
+    w_close = df["close"].resample("W").last().astype(float)
+    w_m = MACD(w_close, window_slow=slow, window_fast=fast, window_sign=signal, fillna=False)
+    w_dif, w_dea = w_m.macd(), w_m.macd_signal()
+    weekly_bull = (w_dif > w_dea)
+    # shift(1): 周线信号滞后一周, 不引用未收盘的本周; 再 ffill 到日度
+    daily_bull = weekly_bull.shift(1).reindex(df.index, method="ffill").fillna(False)
+    return daily_bull.astype(bool), w_dif, w_dea
+
+
 def _weekly_kdj(df: pd.DataFrame, n: int = 9, k_period: int = 3, d_period: int = 3):
     """周线 KDJ。返回 (周线多头布尔(日度ffill), K, D)。
 
@@ -418,6 +440,10 @@ class MidTermStrategy(Strategy):
         # 仓位分级 (共振度打分: 强趋势/月线多头/周KDJ/TRIX/OBV 共振>=4 满仓, 不足半仓;
         # 分级是"减仓"不是"禁入": 不砍趋势股利润, 只把共振不足的信号亏损减半)。
         "use_tier_size": True, "size_scale": 0.5, "min_full_score": 4,
+        # 周线趋势共振 (三重滤网中层: 周MACD DIF>DEA 计入共振分; 默认关, A/B 验证后定)。
+        # tier_weekly_trend: 加进共振分 (score 上限 0~6, 满仓线 min_full_score 需相应审视);
+        # tier_drop_weekly_kdj: 同时把周KDJ从共振分拿掉 (KDJ 是摆动指标, 放趋势层会钝化失真)。
+        "tier_weekly_trend": False, "tier_drop_weekly_kdj": False,
         "use_signal_exit": False,
         "use_ma_stop": False, "ma_stop_period": 20,
         # 跨股票过滤层 (默认全关, 开启需 data/ 下全市场数据; 数据不全自动降级跳过)
@@ -438,6 +464,10 @@ class MidTermStrategy(Strategy):
         # --- 因子计算 (只算一次) ---
         macd_bull, _, _ = _macd(df)
         wk_long, _, _ = _weekly_kdj(df)
+        # 周线趋势 (三重滤网中层: 周MACD DIF>DEA, 用于共振打分; 默认关, A/B后定)
+        wk_trend = None
+        if p.get("use_weekly_trend", False) or p.get("tier_weekly_trend", False):
+            wk_trend, _, _ = _weekly_trend(df)
         obv_bull, _ = _obv(df, window=p["obv_window"], ma_window=p.get("obv_ma_window", 30))
         trix_bull, _, _ = _trix(df, window=p["trix_window"], signal_window=p["trix_signal"])
         boll_bull, _, _, _, _ = _boll(df, window=p["boll_window"], dev=p["boll_dev"])
@@ -633,12 +663,17 @@ class MidTermStrategy(Strategy):
         #   强趋势(ADX>=adx_thresh) +1 | 月线多头 +1 | 周KDJ多头 +1 | TRIX多头 +1 | OBV多头 +1
         # score>=min_full_score 满仓, 否则半仓(size_scale)。
         # 30股5年验证: 共振分级 vs ADX分级 均PF 1.26→1.33, 回撤 22.2→20.8
+        # 三重滤网改版 (tier_weekly_trend): 周线判趋势(周MACD+1, 上限0~6),
+        # 日线判买点; 可选把周KDJ从打分拿掉(tier_drop_weekly_kdj) — KDJ是摆动
+        # 指标, 放趋势层强趋势期钝化失真。仍为软用法: 只动仓位, 不禁入。
         size = None
         if p.get("use_tier_size", True):
             weak_scale = float(p.get("size_scale", 0.5))
+            use_wt = bool(p.get("tier_weekly_trend", False)) and wk_trend is not None
             score = ((adx_s >= p["adx_thresh"]).astype(int)
                      + monthly_long.astype(int)
-                     + wk_long.astype(int)
+                     + (wk_trend.astype(int) if use_wt else 0)
+                     + (0 if p.get("tier_drop_weekly_kdj") else wk_long.astype(int))
                      + trix_bull.astype(int)
                      + obv_bull.astype(int))
             size = pd.Series(
