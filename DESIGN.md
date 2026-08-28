@@ -267,6 +267,22 @@ midterm 从"高胜率网格"转向 **B路径：小亏认、大赚吃**（低胜�
 **边界**：当前因子组合(MACD/TRIX/OBV/BOLL/周KDJ/ADX/月线)的调参空间已到顶（均PF 1.2~1.3），
 再提升需新维度因子（资金面/基本面已接线默认关）。
 
+### 已接线默认关的两个杠杆（2026-08-27，60股 A/B 验证）
+
+1. **波动率归一止损** `atr_norm_target=3.0, atr_norm_hi=1.6`（默认 OFF）：
+   按 `norm = target/atr_pct` 缩放各股止损倍数（低波动股止损更宽、高波动股更紧）。
+   60股中位收益 -1.5→+4.2，中位PF 0.98→1.14——修复低波慢牛（神华/平安），
+   代价是高波大赢家被收紧（洛钼 147→63，立讯 66→28）。**单位坑：atr_pct 是小数**
+   （~0.026），target=3.0 时 norm≈115 必被 hi=1.6 截断 → 实际效果≈"全部倍数×1.6 上限"，
+   并非真归一。与 `ma_entry_gate` 叠加无净改善（gate 边际 -1.9pp），勿组合。
+2. **MA 入场闸门** `ma_entry_gate=True, ma_gate_period=30`（默认 OFF）：
+   "线下不新开参与"——收盘<MA30 只挡新开仓，**持仓退出仍交给 ATR 跟踪止损**
+   （用户拍板语义）。60股中位改善（-1.5→-0.6）、均PF 1.17→1.19，防御段有效
+   （温氏/海天/茅台下跌段少接刀）。**跌破清仓版（ma30_hard）是灾难勿用**：
+   均 5.5→-0.0，中芯 18.9→-39——洗盘线反复踢出趋势股。月线 gating 版 norm16
+   同样证伪（中位 0.15 vs 纯 norm16 4.2）：宽止损的价值恰在"穿越月线空头的大趋势"，
+   与空头期亏损放大不可分离，是同一杠杆的两面。
+
 ---
 
 ## 八、不建议现在做的
@@ -397,6 +413,7 @@ midterm 从"高胜率网格"转向 **B路径：小亏认、大赚吃**（低胜�
 - **当前接入状态**：个股信号层(第3层) + 退出(第5层) 已在 `midterm.generate()` 实现（信号因子 `_macd/_weekly_kdj/_ma_trend/_volume_ratio` 内联在 midterm.py）。**跨股票过滤层(第0/1/2层 闸门/板块/龙头)已接入** `framework/factors/cross_stock.py`（全市场状态缓存，按 symbol 切片），**资金面因子已接入** `framework/factors/flow.py`（北向净流入 + 个股主力净流入），**基本面排雷已接入** `framework/factors/fundamental.py`（PE/PB 分位 + ROE(TTM) + 商誉占比）——三类均**默认全关**，`use_gate/use_sector_strong/use_leader/use_northbound/use_main_flow/use_valuation/use_quality/use_goodwill` 逐个开启观察效果，取数失败自动降级跳过。**仓位层(第6层)已接入共振度分级**（2026-08）——`generate()` 返回 size：多周期共振分(强趋势ADX/月线多头/周KDJ/TRIX/OBV 共0~5)≥4 满仓、不足半仓(size_scale=0.5)，减仓不禁入。Kelly 动态仓位仍是理论目标。
   - ⚠️ **架构债（待重构）**：上述三类选股因子当前通过 `entries = entries & xxx` 混在 `generate()` 末尾，违反「选股与回测分离」单一职责。按第三部分「3.1 选股与回测分离」设计，静态选股迁入 `select()` 钩子、动态跨股票迁入独立 `MarketRegime` 模块、`generate()` 回归纯单股择时。这是后续重构方向，不立即动代码。
 - **因子库**：纯函数（日K进，等长对齐 Series 出），见 `framework/factors/`。当前因子库涵盖：`market_state`(广度/温度) / `sector_trend`(板块强势) / `leader`(龙头) / `cross_stock`(跨股票缓存) / `flow`(资金面) / `fundamental`(基本面排雷)。
+- **退出端可选杠杆（默认关，2026-08-27 接入）**：`atr_norm_target`（波动率归一止损倍数）与 `ma_entry_gate`（MA30 入场闸门，"线下不新开参与"，持仓退出仍走 ATR）。60股 A/B 数据与证伪结论见第一部分第七章「B路径演进」。
 - **代码重构史**：基类模板方法（`run()` 骨架 + 子类 `generate()` 钩子 + `SignalResult`，公共指标 MA系统由基类统一组装）→ 信号因子从 `factors/signal.py` 内联进 midterm.py（signal.py 已清空）。详见 git log。
 
 ### 验证状态
