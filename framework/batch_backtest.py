@@ -27,10 +27,7 @@ from data.fetcher import fetch_stock_history
 
 warnings.filterwarnings("ignore")
 
-# ===== A股交易成本模型 (与 run.py 一致) =====
-COST_FEES = 0.0008
-COST_SLIPPAGE = 0.001
-INIT_CASH = 100000.0
+from engine.costs import COST_FEES, COST_SLIPPAGE, INIT_CASH  # 成本模型唯一定义
 
 # ===== 路径 =====
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

@@ -35,11 +35,7 @@ RUNS_DIR = os.path.join(RESULTS_DIR, "runs")
 MAX_RUNS = 50  # 最多保留最近 50 次运行
 
 # ===== A股交易成本模型 =====
-# 买入: 佣金万3 (最低5元) + 过户费万0.1(沪市)
-# 卖出: 佣金万3 (最低5元) + 印花税千1 + 过户费万0.1(沪市)
-# 买卖平均费率: (0.0003 + 0.0013) / 2 ≈ 0.0008
-COST_FEES = 0.0008      # 佣金+印花税 (买卖平均)
-COST_SLIPPAGE = 0.001   # 滑点 0.1%
+from engine.costs import COST_FEES, COST_SLIPPAGE  # 成本模型唯一定义, 勿在本地重写
 
 
 def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indicators, reasons=None):

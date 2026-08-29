@@ -21,6 +21,7 @@ import vectorbt as vbt
 import pandas as pd
 
 from data.fetcher import fetch_stock_history
+from engine.costs import COST_FEES, COST_SLIPPAGE
 from strategies import STRATS
 
 # ===== 各策略参数搜索网格 =====
@@ -51,8 +52,8 @@ def _quick_backtest(df, strategy_key, params):
         exits=exits,
         direction="longonly",
         init_cash=100000.0,
-        fees=0.0008,
-        slippage=0.001,
+        fees=COST_FEES,
+        slippage=COST_SLIPPAGE,
     )
     total_return = float(pf.total_return()) * 100
     sharpe = float(pf.sharpe_ratio(freq="d", risk_free=0.0))
