@@ -41,3 +41,5 @@ temp_*.json
 
 # 回测运行结果
 framework/results/runs/
+research/attribution_trades.csv
+research/attribution_missed.csv
