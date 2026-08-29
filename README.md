@@ -11,21 +11,25 @@ ai-Quantification/
 ├── data/                  # 数据模块
 │   ├── fetcher.py         # 行情数据获取 (akshare + 本地缓存)
 │   └── sectors.py         # 申万行业指数 + 板块/股票映射
-├── framework/             # 回测框架
-│   ├── run.py             # 回测入口 (单股 + 看板导出)
-│   ├── server_dashboard.py# 看板服务 (动态注入 runs/, 端口 8000)
+├── strategies/            # ③ 策略层 (只产信号, 自动发现)
+│   ├── base.py            # 策略基类 (模板方法: run 骨架 + generate 钩子)
+│   └── midterm.py         # 中期复合策略 (信号 + 退出)
+├── factors/               # ② 因子库 (纯函数: 日K 进, 等长对齐 Series 出)
+│   ├── market_state.py    # 个股广度 / 板块温度 / 情绪 (库内备用, 暂未接入)
+│   ├── sector_trend.py    # 板块趋势 (库内备用, 暂未接入)
+│   ├── leader.py          # 龙头筛选 (库内备用, 暂未接入)
+│   ├── cross_stock.py     # 跨股票因子缓存入口
+│   ├── flow.py            # 资金面 (北向/主力, 默认关)
+│   └── fundamental.py     # 基本面排雷 (默认关)
+├── engine/                # ⑤ 执行层 (回测撮合)
+│   ├── backtest.py        # 回测入口 (单股 + 看板导出)
+│   └── costs.py           # 成本模型唯一定义
+├── research/              # ⑦ 研究闭环
 │   ├── batch_backtest.py  # 30股批量回测 (train/test 拆分)
-│   ├── optimize.py        # 参数网格搜索 + 样本外验证
-│   ├── strategies/        # 策略包 (自动发现)
-│   │   ├── base.py        # 策略基类 (模板方法: run 骨架 + generate 钩子)
-│   │   └── midterm.py     # 中期复合策略 (信号 + 退出)
-│   ├── factors/           # 因子库 (纯函数: 日K 进, 等长对齐 Series 出)
-│   │   ├── signal.py      # (已清空, 信号因子内联进 midterm.py)
-│   │   ├── exit.py        # ATR跟踪止损 / 量价背离 / ADX / build_exits
-│   │   ├── market_state.py# 个股广度 / 板块温度 / 情绪 (库内备用, 暂未接入)
-│   │   ├── sector_trend.py# 板块趋势 (库内备用, 暂未接入)
-│   │   └── leader.py      # 龙头筛选 (库内备用, 暂未接入)
-│   └── results/           # 看板前端 + 回测结果
+│   └── optimize.py        # 参数网格搜索 + 样本外验证
+├── portfolio/ risk/ evaluation/  # ④⑥⑧ 层骨架 (待建设)
+├── dashboard_server.py    # 看板服务 (动态注入 runs/, 端口 8000)
+├── framework/results/     # 看板前端 + 回测结果 (产物目录)
 │       ├── dashboard.html # 看板 (手写静态, 绝不修改)
 │       ├── dashboard.js   # klinecharts 可视化
 │       ├── dashboard.css
@@ -53,21 +57,21 @@ pip install -r requirements.txt
 
 ```bash
 # 默认: midterm 策略 + 平安银行(000001)
-python framework/run.py
+python engine/backtest.py
 
 # 指定策略与股票 (目前内置仅 midterm)
-python framework/run.py midterm 000001
-python framework/run.py midterm 000001 -p vol_min=1.5      # 覆盖参数
-python framework/run.py midterm 000001 --sl 5 --tp 10       # 止损止盈(百分比)
-python framework/run.py midterm 000001 --start 20250101 --end 20260818
-python framework/run.py midterm 000001 --optimize          # 网格搜索 + 样本外验证
-python framework/run.py --list                             # 列所有策略
+python engine/backtest.py midterm 000001
+python engine/backtest.py midterm 000001 -p vol_min=1.5      # 覆盖参数
+python engine/backtest.py midterm 000001 --sl 5 --tp 10       # 止损止盈(百分比)
+python engine/backtest.py midterm 000001 --start 20250101 --end 20260818
+python engine/backtest.py midterm 000001 --optimize          # 网格搜索 + 样本外验证
+python engine/backtest.py --list                             # 列所有策略
 ```
 
 ### 3. 查看看板
 
 ```bash
-python framework/server_dashboard.py
+python dashboard_server.py
 # 浏览器打开 http://localhost:8000/framework/results/dashboard.html
 ```
 
@@ -77,7 +81,7 @@ python framework/server_dashboard.py
 
 ### 4. 自定义策略
 
-在 `framework/strategies/` (或其 `custom/` 子包) 下新建 `.py` 文件，继承 `Strategy`，
+在 `strategies/` (或其 `custom/` 子包) 下新建 `.py` 文件，继承 `Strategy`，
 实现 `generate()` 钩子返回 `SignalResult`：
 
 ```python

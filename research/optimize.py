@@ -1,7 +1,7 @@
 """参数优化器: 网格搜索 + 样本外验证
 
 用法:
-    python framework/run.py midterm 000001 --optimize
+    python engine/backtest.py midterm 000001 --optimize
 
 流程:
     1. 将数据按 7:3 拆分为训练集 / 测试集
@@ -167,5 +167,5 @@ def optimize(strategy_key, symbol, start="20250101", end="20260818"):
     # 10. 使用建议
     print(f"\n  使用推荐参数运行:")
     param_str = " ".join(f"-p {k}={v}" for k, v in best["params"].items())
-    print(f"  python framework/run.py {strategy_key} {symbol} {param_str}")
+    print(f"  python engine/backtest.py {strategy_key} {symbol} {param_str}")
     print()

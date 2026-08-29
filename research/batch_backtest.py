@@ -1,9 +1,9 @@
 """批量回测: 策略 x 30股票, 默认参数, train/test拆分检测过拟合
 
 用法:
-    python framework/batch_backtest.py
-    python framework/batch_backtest.py --strategies midterm
-    python framework/batch_backtest.py --split 0.7
+    python research/batch_backtest.py
+    python research/batch_backtest.py --strategies midterm
+    python research/batch_backtest.py --split 0.7
 
 输出:
     framework/results/batch_summary.csv   — 每只股票每个策略的完整指标
@@ -32,7 +32,7 @@ from engine.costs import COST_FEES, COST_SLIPPAGE, INIT_CASH  # 成本模型唯�
 # ===== 路径 =====
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
-RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "framework", "results")
 
 
 def _load_stock_list():

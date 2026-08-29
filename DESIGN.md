@@ -159,7 +159,7 @@ ATR倍数选择:
   ADX < 20 (震荡市)  → 不交易
 ```
 
-> midterm 已落地：`framework/factors/exit.py` 的 `build_exits` 实现 ATR 跟踪止损（只上移），ADX 决定倍数。
+> midterm 已落地：`factors/exit.py` 的 `build_exits` 实现 ATR 跟踪止损（只上移），ADX 决定倍数。
 
 ### 3.3 已验证的数据
 
@@ -222,7 +222,7 @@ ADX策略5年回撤只有19%，所有策略中最低
 ## 六、代码级Bug和隐患（历史档案）
 
 > 9 策略时期的代码问题，已通过"删冗余策略 + 基类模板方法重构"解决——只保留 midterm，
-> 公共指标(MA系统)上提到 `Strategy` 基类，ATR/ADX 统一到 `framework/factors/exit.py`。
+> 公共指标(MA系统)上提到 `Strategy` 基类，ATR/ADX 统一到 `factors/exit.py`。
 > 下表保留作历史档案。仅 #6/#9 两项仍待办。
 
 | # | 问题 | 历史文件 | 现状 |
@@ -404,15 +404,15 @@ midterm 从"高胜率网格"转向 **B路径：小亏认、大赚吃**（低胜�
 ## 十二、中期策略落地（设计稿 → 已实现）
 
 > 原 ch12~ch15 是中期量化完整设计稿（四层架构 / 因子总表 / 因子处理细则 / 七层闭环 v2），
-> 共约 500 行，**已落地为 `midterm` 策略**（`framework/strategies/midterm.py`）。
+> 共约 500 行，**已落地为 `midterm` 策略**（`strategies/midterm.py`）。
 > 设计原理与七层架构表见本文第二部分，此处不重复。
 
 ### 落地要点
 
 - **七层闭环**：闸门(情绪/板块温度) → 板块 → 龙头 → 信号(周KDJ+MACD+MA+量比) → 环境(ADX+ATR定止损宽度) → 退出(ATR跟踪/量价背离) → 仓位(Kelly×ADX系数)。详见第二部分。
-- **当前接入状态**：个股信号层(第3层) + 退出(第5层) 已在 `midterm.generate()` 实现（信号因子 `_macd/_weekly_kdj/_ma_trend/_volume_ratio` 内联在 midterm.py）。**跨股票过滤层(第0/1/2层 闸门/板块/龙头)已接入** `framework/factors/cross_stock.py`（全市场状态缓存，按 symbol 切片），**资金面因子已接入** `framework/factors/flow.py`（北向净流入 + 个股主力净流入），**基本面排雷已接入** `framework/factors/fundamental.py`（PE/PB 分位 + ROE(TTM) + 商誉占比）——三类均**默认全关**，`use_gate/use_sector_strong/use_leader/use_northbound/use_main_flow/use_valuation/use_quality/use_goodwill` 逐个开启观察效果，取数失败自动降级跳过。**仓位层(第6层)已接入共振度分级**（2026-08）——`generate()` 返回 size：多周期共振分(强趋势ADX/月线多头/周KDJ/TRIX/OBV 共0~5)≥4 满仓、不足半仓(size_scale=0.5)，减仓不禁入。Kelly 动态仓位仍是理论目标。
+- **当前接入状态**：个股信号层(第3层) + 退出(第5层) 已在 `midterm.generate()` 实现（信号因子 `_macd/_weekly_kdj/_ma_trend/_volume_ratio` 内联在 midterm.py）。**跨股票过滤层(第0/1/2层 闸门/板块/龙头)已接入** `factors/cross_stock.py`（全市场状态缓存，按 symbol 切片），**资金面因子已接入** `factors/flow.py`（北向净流入 + 个股主力净流入），**基本面排雷已接入** `factors/fundamental.py`（PE/PB 分位 + ROE(TTM) + 商誉占比）——三类均**默认全关**，`use_gate/use_sector_strong/use_leader/use_northbound/use_main_flow/use_valuation/use_quality/use_goodwill` 逐个开启观察效果，取数失败自动降级跳过。**仓位层(第6层)已接入共振度分级**（2026-08）——`generate()` 返回 size：多周期共振分(强趋势ADX/月线多头/周KDJ/TRIX/OBV 共0~5)≥4 满仓、不足半仓(size_scale=0.5)，减仓不禁入。Kelly 动态仓位仍是理论目标。
   - ⚠️ **架构债（待重构）**：上述三类选股因子当前通过 `entries = entries & xxx` 混在 `generate()` 末尾，违反「选股与回测分离」单一职责。按第三部分「3.1 选股与回测分离」设计，静态选股迁入 `select()` 钩子、动态跨股票迁入独立 `MarketRegime` 模块、`generate()` 回归纯单股择时。这是后续重构方向，不立即动代码。
-- **因子库**：纯函数（日K进，等长对齐 Series 出），见 `framework/factors/`。当前因子库涵盖：`market_state`(广度/温度) / `sector_trend`(板块强势) / `leader`(龙头) / `cross_stock`(跨股票缓存) / `flow`(资金面) / `fundamental`(基本面排雷)。
+- **因子库**：纯函数（日K进，等长对齐 Series 出），见 `factors/`。当前因子库涵盖：`market_state`(广度/温度) / `sector_trend`(板块强势) / `leader`(龙头) / `cross_stock`(跨股票缓存) / `flow`(资金面) / `fundamental`(基本面排雷)。
 - **退出端可选杠杆（默认关，2026-08-27 接入）**：`atr_norm_target`（波动率归一止损倍数）与 `ma_entry_gate`（MA30 入场闸门，"线下不新开参与"，持仓退出仍走 ATR）。60股 A/B 数据与证伪结论见第一部分第七章「B路径演进」。
 - **代码重构史**：基类模板方法（`run()` 骨架 + 子类 `generate()` 钩子 + `SignalResult`，公共指标 MA系统由基类统一组装）→ 信号因子从 `factors/signal.py` 内联进 midterm.py（signal.py 已清空）。详见 git log。
 
@@ -537,7 +537,7 @@ ATR跟踪止损 (3×ATR):
   - 实际分布: 小赚+8% / 中赚+20% / 大赚+50% → 平均盈利21% → 盈亏比 21/6 = 3.5
 ```
 
-> midterm 已落地：`framework/factors/exit.py` 的 `build_exits` 实现 ATR 跟踪止损（只上移），ADX 决定倍数。
+> midterm 已落地：`factors/exit.py` 的 `build_exits` 实现 ATR 跟踪止损（只上移），ADX 决定倍数。
 
 #### ATR 倍数选择
 
@@ -708,7 +708,7 @@ f* = (p × b - q) / b
 - [x] 数据层：akshare + 本地缓存 + 申万行业指数
 - [x] 中期复合策略 midterm：周KDJ + MACD + MA + 量比 共振入场，ATR跟踪止损退出
 - [x] 参数优化：网格搜索 + train/test 拆分样本外验证
-- [x] 因子库 `framework/factors/`：纯函数，输入日K输出等长对齐 Series
+- [x] 因子库 `factors/`：纯函数，输入日K输出等长对齐 Series
 - [x] 跨股票因子接入：闸门/板块/龙头(`cross_stock.py`)、资金面(`flow.py`)、基本面排雷(`fundamental.py`)，默认全关可逐个开启，取数失败自动降级
 
 ### 当前局限
@@ -735,7 +735,7 @@ f* = (p × b - q) / b
 - [ ] 参数敏感性分析：参数微调对收益的影响热力图
 - [x] 多参数寻优：支持同时优化多个参数
 
-**预期产出**：`python framework/run.py midterm 000001 --optimize` 自动输出最优参数
+**预期产出**：`python engine/backtest.py midterm 000001 --optimize` 自动输出最优参数
 
 ### 2.2 交易成本修正
 
@@ -821,7 +821,7 @@ use_northbound/use_main_flow/use_valuation/use_quality/use_goodwill` 开关，�
 - [ ] 多因子打分：价值/动量/质量/波动率因子
 - [ ] 因子排名选股：全市场按因子得分排名取 Top N
 - [ ] 行业中性化：剔除行业偏差
-- [x] 财务数据接入：PE/PB/ROE/商誉 基本面排雷因子已落地(`framework/factors/fundamental.py`)，当前作为 midterm 选股硬过滤接入(默认关，混在 generate 里)；按上述设计应迁入 `select()` 钩子，多因子打分模型待后续
+- [x] 财务数据接入：PE/PB/ROE/商誉 基本面排雷因子已落地(`factors/fundamental.py`)，当前作为 midterm 选股硬过滤接入(默认关，混在 generate 里)；按上述设计应迁入 `select()` 钩子，多因子打分模型待后续
 
 ### 3.2 组合回测
 

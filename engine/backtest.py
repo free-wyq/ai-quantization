@@ -1,12 +1,12 @@
 """专业回测运行器 (vectorbt 向量化)
 
 用法:
-    python framework/run.py [策略] [股票代码] [-p key=value ...]
-    python framework/run.py midterm 000001
-    python framework/run.py midterm 000001 -p vol_min=1.5
-    python framework/run.py midterm 000001 --sl 5 --tp 10
-    python framework/run.py midterm 000001 --optimize
-    python framework/run.py --list
+    python engine/backtest.py [策略] [股票代码] [-p key=value ...]
+    python engine/backtest.py midterm 000001
+    python engine/backtest.py midterm 000001 -p vol_min=1.5
+    python engine/backtest.py midterm 000001 --sl 5 --tp 10
+    python engine/backtest.py midterm 000001 --optimize
+    python engine/backtest.py --list
 
 自研策略: 在 framework/strategies/custom/ 下新建 .py 文件,
           定义 Strategy 子类即可被框架自动发现, 无需修改框架代码。
@@ -20,7 +20,7 @@ import sys
 import os
 import json
 import datetime
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 仓库根
 
 import argparse
 import vectorbt as vbt
@@ -30,7 +30,7 @@ from data.fetcher import fetch_stock_history, get_stock_name
 from strategies import STRATS
 
 # ===== 结果看板相关路径 =====
-RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "framework", "results")
 RUNS_DIR = os.path.join(RESULTS_DIR, "runs")
 MAX_RUNS = 50  # 最多保留最近 50 次运行
 
@@ -112,7 +112,7 @@ def _export_result(strategy_key, symbol, df, entries, exits, pf, metrics, indica
     _rotate_runs()
 
     print(f"  结果已存档: framework/results/runs/{filename}")
-    print(f"  看板服务:   framework/ 目录下执行  python serve_dashboard.py")
+    print(f"  看板服务:   仓库根目录执行  python dashboard_server.py")
     print(f"  浏览器打开: http://localhost:8000/framework/results/dashboard.html")
     print(f"  (每次刷新页面都会自动加载最新回测记录)")
 
@@ -254,7 +254,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.optimize:
-        from framework.optimize import optimize
+        from research.optimize import optimize
         optimize(args.strategy, args.symbol, start=args.start, end=args.end)
         sys.exit(0)
 
