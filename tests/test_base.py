@@ -23,8 +23,8 @@ class TestStrategyBase:
 
     def test_param_override(self):
         """参数覆盖应生效"""
-        s = MidTermStrategy(vol_min=1.5, atr=20)
-        assert s.params["vol_min"] == 1.5
+        s = MidTermStrategy(trix_window=14, atr=20)
+        assert s.params["trix_window"] == 14
         assert s.params["atr"] == 20
 
     def test_unknown_param_warning(self):

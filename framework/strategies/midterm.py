@@ -408,7 +408,6 @@ class MidTermStrategy(Strategy):
     label = "中期量化"
     params = {
         # 信号
-        "vol_min": 1.2, "vol_lookback": 5,
         "no_weekly": False,
         # 月线方向过滤 (多周期共振最高层: 月线多头才允许做多; 默认关, 按需开启)
         "no_monthly": True, "monthly_ma": 20,
@@ -441,7 +440,7 @@ class MidTermStrategy(Strategy):
         # 分级是"减仓"不是"禁入": 不砍趋势股利润, 只把共振不足的信号亏损减半)。
         "use_tier_size": True, "size_scale": 0.5, "min_full_score": 4,
         # 周线趋势共振 (三重滤网中层: 周MACD DIF>DEA 计入共振分; 默认关, A/B 验证后定)。
-        # tier_weekly_trend: 加进共振分 (score 上限 0~6, 满仓线 min_full_score 需相应审视);
+        # tier_weekly_trend: 加进共振分 (score 上限 0~6, 开启时 min_full_score 建议联动上调);
         # tier_drop_weekly_kdj: 同时把周KDJ从共振分拿掉 (KDJ 是摆动指标, 放趋势层会钝化失真)。
         "tier_weekly_trend": False, "tier_drop_weekly_kdj": False,
         "use_signal_exit": False,
@@ -465,8 +464,9 @@ class MidTermStrategy(Strategy):
         macd_bull, _, _ = _macd(df)
         wk_long, _, _ = _weekly_kdj(df)
         # 周线趋势 (三重滤网中层: 周MACD DIF>DEA, 用于共振打分; 默认关, A/B后定)
+        # 注: tier_weekly_trend 是唯一入口 (旧开关 use_weekly_trend 未入参数表, 已移除)
         wk_trend = None
-        if p.get("use_weekly_trend", False) or p.get("tier_weekly_trend", False):
+        if p.get("tier_weekly_trend", False):
             wk_trend, _, _ = _weekly_trend(df)
         obv_bull, _ = _obv(df, window=p["obv_window"], ma_window=p.get("obv_ma_window", 30))
         trix_bull, _, _ = _trix(df, window=p["trix_window"], signal_window=p["trix_signal"])
