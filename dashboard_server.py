@@ -17,7 +17,7 @@ import re
 import json
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.abspath(__file__))  # 服务器在仓库根, ROOT 即仓库根
 RESULTS_DIR = os.path.join(ROOT, "framework", "results")
 RUNS_DIR = os.path.join(RESULTS_DIR, "runs")
 PORT = 8000
