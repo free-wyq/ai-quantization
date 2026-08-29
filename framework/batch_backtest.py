@@ -22,7 +22,7 @@ import pandas as pd
 import numpy as np
 import vectorbt as vbt
 
-from framework.strategies import STRATS
+from strategies import STRATS
 from data.fetcher import fetch_stock_history
 
 warnings.filterwarnings("ignore")

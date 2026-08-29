@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from framework.strategies import STRATS
+from strategies import STRATS
 
 
 @pytest.fixture(params=list(STRATS.keys()))

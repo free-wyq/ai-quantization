@@ -27,7 +27,7 @@ import vectorbt as vbt
 import pandas as pd
 
 from data.fetcher import fetch_stock_history, get_stock_name
-from framework.strategies import STRATS
+from strategies import STRATS
 
 # ===== 结果看板相关路径 =====
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")

@@ -5,9 +5,9 @@ import warnings
 import pandas as pd
 import pytest
 
-from framework.strategies import STRATS
-from framework.strategies.base import Strategy, SignalResult, series_to_list
-from framework.strategies.midterm import MidTermStrategy
+from strategies import STRATS
+from strategies.base import Strategy, SignalResult, series_to_list
+from strategies.midterm import MidTermStrategy
 
 
 class TestStrategyBase:

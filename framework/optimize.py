@@ -21,7 +21,7 @@ import vectorbt as vbt
 import pandas as pd
 
 from data.fetcher import fetch_stock_history
-from framework.strategies import STRATS
+from strategies import STRATS
 
 # ===== 各策略参数搜索网格 =====
 # 聚焦趋势/回撤杠杆 (符合"只抓趋势低回撤"理念), 不搜已废弃因子 (ma/vol_ratio 已删)
